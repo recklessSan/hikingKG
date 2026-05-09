@@ -1,6 +1,6 @@
 import Foundation
 
-struct Track: Codable, Identifiable, Equatable {
+struct Track: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     var routeId: UUID?
     var userId: UUID?
@@ -19,4 +19,12 @@ struct Track: Codable, Identifiable, Equatable {
     var createdAt: Date = Date()
 
     var pointsCount: Int { points.count }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: Track, rhs: Track) -> Bool {
+        lhs.id == rhs.id
+    }
 }

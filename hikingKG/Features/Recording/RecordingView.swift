@@ -1,120 +1,103 @@
-// Features/Recording/RecordingView.swift
-
 import SwiftUI
 import MapKit
 
 struct RecordingView: View {
     @StateObject private var viewModel: RecordingViewModel
     @State private var showAuthAlert = false
-    
-    init(track: Track, locationService: LocationService) {
+
+    init(track: Track = Track(), locationService: LocationService) {
         _viewModel = StateObject(wrappedValue: RecordingViewModel(track: track, locationService: locationService))
     }
-    
+
     var body: some View {
         ZStack {
-            mapViewOverlay
-            
-            overlayControls
-            
-            if viewModel.track.points.isEmpty && !viewModel.isRecording {
-                startHint
+            Map(coordinateRegion: $viewModel.currentRegion,
+                showsUserLocation: true,
+                userTrackingMode: .constant(.follow))
+                .ignoresSafeArea()
+
+            VStack {
+                statsCard
+                Spacer()
+                controls
             }
+            .padding()
         }
-        .onAppear {
-            checkAuthorization()
-        }
-        .alert("Location Access Required", isPresented: $showAuthAlert) {
-            Button("OK", role: .cancel) { }
-            Button("Settings") {
+        .navigationTitle("Запись")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { ensureAuthorization() }
+        .alert("Нужен доступ к геопозиции", isPresented: $showAuthAlert) {
+            Button("Отмена", role: .cancel) {}
+            Button("Открыть настройки") {
+                #if canImport(UIKit)
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
+                #endif
             }
         } message: {
-            Text("Please enable Location Services to record your hiking track.")
+            Text("Включите геолокацию, чтобы записать трек.")
         }
     }
-    
-    // MARK: - Map
-    
-    private var mapViewOverlay: some View {
-        Map(coordinateRegion: $viewModel.currentRegion,
-            showsUserLocation: true,
-            userTrackingMode: .constant(.follow))
+
+    private var statsCard: some View {
+        HStack {
+            statBlock(title: "Время", value: viewModel.elapsedText)
+            Divider().frame(height: 36)
+            statBlock(title: "Дистанция", value: viewModel.distanceText)
+            Divider().frame(height: 36)
+            statBlock(title: "Набор", value: viewModel.elevationText)
+        }
+        .padding()
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
-    
-    // MARK: - Controls
-    
-    private var overlayControls: some View {
-        VStack {
-            HStack {
-                Text(viewModel.startTimeText)
-                    .font(.title2.monospacedDigit())
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(viewModel.distanceText)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(viewModel.elevationText)
-                    .fontWeight(.semibold)
-            }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial)
-            .cornerRadius(12)
-            .padding()
-            
-            Spacer()
-            
-            HStack(spacing: 24) {
-                if viewModel.isRecording {
-                    Button(action: pauseRecording) {
-                        Image(systemName: "pause.fill")
-                            .font(.title2)
-                            .frame(width: 60, height: 60)
-                            .background(Color.red.opacity(0.2))
-                            .clipShape(Circle())
-                    }
-                    
-                    Button(action: stopRecording) {
-                        Image(systemName: "square.fill")
-                            .font(.title2)
-                            .frame(width: 60, height: 60)
-                            .background(Color.red.opacity(0.2))
-                            .clipShape(Circle())
-                    }
-                } else {
-                    Button(action: startRecording) {
-                        Image(systemName: "record.circle")
-                            .font(.title2)
-                            .frame(width: 70, height: 70)
-                            .background(Color.green.opacity(0.25))
-                            .clipShape(Circle())
-                    }
+
+    private func statBlock(title: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.headline.monospacedDigit())
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(value)")
+    }
+
+    private var controls: some View {
+        HStack(spacing: 24) {
+            if !viewModel.isRecording {
+                Button(action: viewModel.startRecording) {
+                    Label("Старт", systemImage: "record.circle")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+            } else {
+                if viewModel.isPaused {
+                    Button(action: viewModel.resumeRecording) {
+                        Label("Продолжить", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button(action: viewModel.pauseRecording) {
+                        Label("Пауза", systemImage: "pause.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button(role: .destructive, action: viewModel.stopRecording) {
+                    Label("Стоп", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
             }
-            .padding()
         }
     }
-    
-    // MARK: - Hint
-    
-    private var startHint: some View {
-        VStack {
-            Spacer()
-            Text("Press the green button to start recording your track")
-                .multilineTextAlignment(.center)
-                .padding(16)
-                .background(.ultraThinMaterial)
-                .cornerRadius(12)
-                .padding()
-        }
-    }
-    
-    // MARK: - Logic
-    
-    private func checkAuthorization() {
+
+    private func ensureAuthorization() {
         switch viewModel.locationService.authorizationStatus {
         case .notDetermined:
             viewModel.locationService.requestWhenInUse()
@@ -124,6 +107,4 @@ struct RecordingView: View {
             break
         }
     }
-    
-    private func startRecording()
-
+}

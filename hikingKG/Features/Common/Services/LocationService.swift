@@ -1,49 +1,50 @@
-// Services/LocationService.swift
-
 import CoreLocation
 import Combine
 
 @MainActor
 final class LocationService: NSObject, ObservableObject {
     private let manager = CLLocationManager()
-    
+
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var currentLocation: CLLocation?
     @Published var isRecording = false
-    
-    // Для новых точек
-    var newPointPublisher = PassthroughSubject<TrackPoint, Never>()
-    
-    private var lastPoint: CLLocation?
-    
+
+    let newPointPublisher = PassthroughSubject<TrackPoint, Never>()
+
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.distanceFilter = 5.0
+        manager.pausesLocationUpdatesAutomatically = false
+        authorizationStatus = manager.authorizationStatus
     }
-    
+
     func requestWhenInUse() {
         manager.requestWhenInUseAuthorization()
     }
-    
+
     func requestAlways() {
         manager.requestAlwaysAuthorization()
     }
-    
+
     func startRecording() {
         guard authorizationStatus == .authorizedWhenInUse ||
               authorizationStatus == .authorizedAlways else { return }
-        
+        if authorizationStatus == .authorizedAlways {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        }
         manager.startUpdatingLocation()
         isRecording = true
     }
-    
+
     func stopRecording() {
         manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
         isRecording = false
     }
-    
+
     func setDistanceFilter(_ value: Double) {
         manager.distanceFilter = value
     }
@@ -54,31 +55,30 @@ final class LocationService: NSObject, ObservableObject {
 extension LocationService: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             self.currentLocation = location
-            
             let point = self.makeTrackPoint(from: location)
             self.newPointPublisher.send(point)
         }
     }
-    
+
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        DispatchQueue.main.async { [weak self] in
-            self?.authorizationStatus = manager.authorizationStatus
+        let status = manager.authorizationStatus
+        Task { @MainActor [weak self] in
+            self?.authorizationStatus = status
         }
     }
-    
+
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        // Можно добавить логирование
+        // can add logging
     }
 }
 
 // MARK: - Helpers
 
 extension LocationService {
-    private func makeTrackPoint(from location: CLLocation) -> TrackPoint {
+    fileprivate func makeTrackPoint(from location: CLLocation) -> TrackPoint {
         TrackPoint(
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
@@ -90,4 +90,3 @@ extension LocationService {
         )
     }
 }
-

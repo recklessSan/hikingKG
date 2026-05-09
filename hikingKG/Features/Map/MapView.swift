@@ -7,35 +7,30 @@ struct RouteMapView: View {
     let startCoordinate: CLLocationCoordinate2D?
     let endCoordinate: CLLocationCoordinate2D?
 
-    @State private var region: MKCoordinateRegion = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 41.5, longitude: 75.0),
-        span: MKCoordinateSpan(latitudeDelta: 6.0, longitudeDelta: 6.0)
+    @State private var cameraPosition: MapCameraPosition = .region(
+        MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 41.5, longitude: 75.0),
+            span: MKCoordinateSpan(latitudeDelta: 6.0, longitudeDelta: 6.0)
+        )
     )
 
     var body: some View {
-        Map(coordinateRegion: $region,
-            annotationItems: annotations) { annotation in
-            MapMarker(coordinate: annotation.coordinate, tint: annotation.tint)
+        Map(position: $cameraPosition) {
+            if coordinates.count >= 2 {
+                MapPolyline(coordinates: coordinates)
+                    .stroke(.blue, lineWidth: 3)
+            }
+            if let start = startCoordinate {
+                Marker("Старт", coordinate: start)
+                    .tint(.green)
+            }
+            if let end = endCoordinate {
+                Marker("Финиш", coordinate: end)
+                    .tint(.red)
+            }
         }
         .onAppear { fitRegion() }
         .accessibilityLabel("Карта маршрута")
-    }
-
-    private struct Annotation: Identifiable {
-        let id = UUID()
-        let coordinate: CLLocationCoordinate2D
-        let tint: Color
-    }
-
-    private var annotations: [Annotation] {
-        var items: [Annotation] = []
-        if let start = startCoordinate {
-            items.append(Annotation(coordinate: start, tint: .green))
-        }
-        if let end = endCoordinate {
-            items.append(Annotation(coordinate: end, tint: .red))
-        }
-        return items
     }
 
     private func fitRegion() {
@@ -57,6 +52,6 @@ struct RouteMapView: View {
             latitudeDelta: max(0.05, (maxLat - minLat) * 1.4),
             longitudeDelta: max(0.05, (maxLon - minLon) * 1.4)
         )
-        region = MKCoordinateRegion(center: center, span: span)
+        cameraPosition = .region(MKCoordinateRegion(center: center, span: span))
     }
 }

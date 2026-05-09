@@ -4,6 +4,14 @@ import MapKit
 struct RecordingView: View {
     @StateObject private var viewModel: RecordingViewModel
     @State private var showAuthAlert = false
+    @State private var cameraPosition: MapCameraPosition = .userLocation(
+        fallback: .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 42.8746, longitude: 74.5698),
+                span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+            )
+        )
+    )
 
     init(track: Track = Track(), locationService: LocationService) {
         _viewModel = StateObject(wrappedValue: RecordingViewModel(track: track, locationService: locationService))
@@ -11,10 +19,10 @@ struct RecordingView: View {
 
     var body: some View {
         ZStack {
-            Map(coordinateRegion: $viewModel.currentRegion,
-                showsUserLocation: true,
-                userTrackingMode: .constant(.follow))
-                .ignoresSafeArea()
+            Map(position: $cameraPosition) {
+                UserAnnotation()
+            }
+            .ignoresSafeArea()
 
             VStack {
                 statsCard

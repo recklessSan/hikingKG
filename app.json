@@ -1,0 +1,55 @@
+{
+  "name": "card-parser-bot",
+  "description": "Telegram-бот аналитики партий карт без хранения номеров",
+  "repository": "",
+  "keywords": ["telegram", "heroku"],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Токен бота от @BotFather"
+    },
+    "CHAT_1_ID": {
+      "description": "ID чата поступлений (банк + количество)"
+    },
+    "CHAT_2_ID": {
+      "description": "ID чата отчётов (только «ПЕРЕДАНО В Т-ОФИС»)"
+    },
+    "CHAT_3_ID": {
+      "description": "ID третьего чата (формат задаётся CHAT_3_MODE)",
+      "required": false
+    },
+    "CHAT_3_MODE": {
+      "description": "chat1, chat2 или auto",
+      "value": "auto",
+      "required": false
+    },
+    "ADMIN_CHAT_ID": {
+      "description": "Куда слать отчёты и где разрешены команды"
+    },
+    "ADMIN_USER_IDS": {
+      "description": "Список Telegram user id через запятую",
+      "required": false
+    },
+    "TIMEZONE": {
+      "value": "Europe/Moscow",
+      "required": false
+    },
+    "REPORT_HOUR": {
+      "value": "21",
+      "required": false
+    },
+    "REPORT_MINUTE": {
+      "value": "0",
+      "required": false
+    },
+    "WEBHOOK_URL": {
+      "description": "Публичный URL приложения, например https://my-app.herokuapp.com",
+      "required": false
+    }
+  },
+  "addons": ["heroku-postgresql"],
+  "formation": {
+    "web": {
+      "quantity": 1
+    }
+  }
+}

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     report_hour: int = 21
     report_minute: int = 0
 
+    phones_file: str = "phones.csv"
+
     webhook_url: str | None = None
     webhook_path: str = "telegram"
     port: int = 8443

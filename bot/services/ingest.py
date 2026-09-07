@@ -7,9 +7,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import CardBatch
+from bot.db.models import CardBatch, PhoneCheck
 from bot.parsers.base import ParsedBatch, ParseResult
 from bot.parsers.redact import contains_pan, redact_card_numbers
+from bot.services.phones import persist_phone_checks
 
 
 def merge_batches(batches: list[ParsedBatch]) -> list[ParsedBatch]:
@@ -30,6 +31,11 @@ def merge_batches(batches: list[ParsedBatch]) -> list[ParsedBatch]:
         existing.batch_ref = existing.batch_ref or batch.batch_ref
         if batch.excerpt and batch.excerpt not in existing.excerpt:
             existing.excerpt = f"{existing.excerpt}\n{batch.excerpt}".strip()
+        seen = {item.e164 for item in existing.phones}
+        for phone in batch.phones:
+            if phone.e164 not in seen:
+                existing.phones.append(phone)
+                seen.add(phone.e164)
     return list(merged.values())
 
 
@@ -45,6 +51,16 @@ class IngestMeta:
 
 
 async def persist_parse_result(session: AsyncSession, result: ParseResult, meta: IngestMeta) -> int:
+    old_ids = list(
+        await session.scalars(
+            select(CardBatch.id).where(
+                CardBatch.telegram_chat_id == meta.telegram_chat_id,
+                CardBatch.telegram_message_id == meta.telegram_message_id,
+            )
+        )
+    )
+    if old_ids:
+        await session.execute(delete(PhoneCheck).where(PhoneCheck.batch_id.in_(old_ids)))
     await session.execute(
         delete(CardBatch).where(
             CardBatch.telegram_chat_id == meta.telegram_chat_id,
@@ -84,8 +100,13 @@ async def persist_parse_result(session: AsyncSession, result: ParseResult, meta:
             work_at=batch.work_at,
             has_deposit=batch.has_deposit,
             excerpt=excerpt[:500],
+            phone_count=len(batch.phones),
         )
         session.add(row)
+        await session.flush()
+        known, unknown = await persist_phone_checks(session, row.id, batch.phones)
+        row.phones_known = known
+        row.phones_unknown = unknown
         saved += 1
     await session.flush()
     return saved

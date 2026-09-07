@@ -5,7 +5,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from bot.parsers.banks import normalize_bank
-from bot.parsers.base import ParsedBatch, ParseResult
+from bot.parsers.base import ParsedBatch, ParsedPhone, ParseResult
+from bot.parsers.phones import extract_phone_from_line
 from bot.parsers.redact import looks_like_card_line, redact_card_numbers
 
 _HEADER_RE = re.compile(
@@ -41,8 +42,6 @@ def parse_chat1(text: str, *, timezone: str = "Europe/Moscow") -> ParseResult:
         line = raw_line.strip()
         if not line:
             continue
-        if looks_like_card_line(line):
-            continue
 
         header = _HEADER_RE.match(line)
         if header:
@@ -76,6 +75,16 @@ def parse_chat1(text: str, *, timezone: str = "Europe/Moscow") -> ParseResult:
             if work_match:
                 footer_work = _parse_dt(work_match.group("work_time"), work_match.group("work_date"), tz)
             footer_deposit = "внесение" in folded
+            continue
+
+        phone = extract_phone_from_line(line)
+        if phone and current is not None:
+            if all(item.e164 != phone for item in current.phones):
+                current.phones.append(ParsedPhone(e164=phone, raw=line))
+            continue
+
+        if looks_like_card_line(line):
+            continue
 
     if not batches:
         return ParseResult(source="chat1", skipped_reason="no_bank_header")

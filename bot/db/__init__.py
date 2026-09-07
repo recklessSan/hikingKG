@@ -1,3 +1,3 @@
-from bot.db.models import Base, CardBatch
+from bot.db.models import Base, CardBatch, PhoneCheck, PhoneDirectory
 
-__all__ = ["Base", "CardBatch"]
+__all__ = ["Base", "CardBatch", "PhoneCheck", "PhoneDirectory"]

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 from datetime import time
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func, select
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -12,10 +14,15 @@ from telegram.ext import (
 )
 
 from bot.config import Settings
-from bot.db.session import create_tables, init_engine
+from bot.db.models import PhoneDirectory
+from bot.db.session import create_tables, init_engine, session_scope
 from bot.handlers.commands import (
     cmd_chatid,
+    cmd_check,
     cmd_help,
+    cmd_phones,
+    cmd_phones_add,
+    cmd_phones_reload,
     cmd_report,
     cmd_start,
     cmd_stats,
@@ -23,8 +30,9 @@ from bot.handlers.commands import (
     cmd_toffice,
     cmd_week,
 )
-from bot.handlers.messages import on_text_message
+from bot.handlers.messages import on_csv_document, on_text_message
 from bot.scheduler import send_daily_report
+from bot.services.phones import import_phones_csv
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +59,10 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("stats", cmd_stats))
     application.add_handler(CommandHandler("toffice", cmd_toffice))
     application.add_handler(CommandHandler("report", cmd_report))
+    application.add_handler(CommandHandler("phones", cmd_phones))
+    application.add_handler(CommandHandler("check", cmd_check))
+    application.add_handler(CommandHandler("phones_add", cmd_phones_add))
+    application.add_handler(CommandHandler("phones_reload", cmd_phones_reload))
     text_filter = filters.TEXT & ~filters.COMMAND
     application.add_handler(MessageHandler(text_filter, on_text_message))
     application.add_handler(
@@ -62,6 +74,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(
         MessageHandler(filters.UpdateType.EDITED_CHANNEL_POST & filters.TEXT, on_text_message)
     )
+    application.add_handler(MessageHandler(filters.Document.ALL, on_csv_document))
 
     tz = ZoneInfo(settings.timezone)
     application.job_queue.run_daily(
@@ -74,4 +87,11 @@ def build_application(settings: Settings) -> Application:
 
 async def _post_init(application: Application) -> None:
     await create_tables()
+    settings: Settings = application.bot_data["settings"]
+    path = Path(settings.phones_file)
+    if path.is_file():
+        async with session_scope() as session:
+            imported = await import_phones_csv(session, path)
+            total = await session.scalar(select(func.count()).select_from(PhoneDirectory)) or 0
+        logger.info("phone directory: imported %s from %s, total %s", imported, path, total)
     logger.info("database is ready")

@@ -41,6 +41,11 @@
       "value": "0",
       "required": false
     },
+    "PHONES_FILE": {
+      "description": "Путь к CSV справочника телефонов",
+      "value": "phones.csv",
+      "required": false
+    },
     "WEBHOOK_URL": {
       "description": "Публичный URL приложения, например https://my-app.herokuapp.com",
       "required": false

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from bot.config import Settings
 from bot.db.session import create_tables, init_engine, session_scope
@@ -8,28 +9,29 @@ from bot.parsers.chat1 import parse_chat1
 from bot.parsers.chat2 import parse_chat2
 from bot.parsers.redact import contains_pan
 from bot.services.ingest import IngestMeta, persist_parse_result
+from bot.services.phones import fetch_unknown_phones, import_phones_csv
 from bot.services.reports import build_report
 
 CHAT1_SAMPLES = [
     """Альфа: 4 шт  КЭШ   F1701092026 ❗️
 
-2200 0000 0000 0001  66.1
-2200 0000 0000 0002  51.2
-2200 0000 0000 0003  1.2
-2200 0000 0000 0004  3.1
++7 900 111-22-31
+8 (900) 111-22-32
+79001112233
+9001112235
 """,
     """ОТП: 5 шт   КЭШ
 
-2201 0000 0000 0001  37.7
-2201 0000 0000 0002  70.6
-2201 0000 0000 0003  1.4
-2201 0000 0000 0004  43.3
-2201 0000 0000 0005  69.2
++7 900 111 22 41
+8 900 111 22 42
+79001112243
++7 900 111-22-44
+9001112245
 """,
     """Альфа: 2 шт БЕЗ ЛК  КЭШ
 
-2200 0000 0000 0008  66.6
-2200 0000 0000 0009  65.1
++7 900 111-22-31
+8 900 111-22-36
 
 Вход в лк в 19:40 02.09.2026 + внесение + в работу в 19:40 03.09.2026
 """,
@@ -66,13 +68,18 @@ CHAT2_SAMPLE = """05.09.2026
 """
 
 
-async def run_demo(database_url: str = "sqlite+aiosqlite:///:memory:") -> int:
+async def run_demo(
+    database_url: str = "sqlite+aiosqlite:///:memory:",
+    phones_file: str = "phones.example.csv",
+) -> int:
     settings = Settings(database_url=database_url, timezone="Europe/Moscow")
     init_engine(settings)
     await create_tables()
     message_at = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 
     async with session_scope() as session:
+        if Path(phones_file).is_file():
+            await import_phones_csv(session, phones_file)
         for index, sample in enumerate(CHAT1_SAMPLES, start=1):
             result = parse_chat1(sample, timezone=settings.timezone)
             await persist_parse_result(
@@ -105,6 +112,7 @@ async def run_demo(database_url: str = "sqlite+aiosqlite:///:memory:") -> int:
         from bot.services.ingest import fetch_batches
 
         batches = await fetch_batches(session)
+        unknown = await fetch_unknown_phones(session, [row.id for row in batches])
 
     for row in batches:
         blob = " ".join(
@@ -123,10 +131,11 @@ async def run_demo(database_url: str = "sqlite+aiosqlite:///:memory:") -> int:
 
     report = build_report(
         batches,
-        title="Демо-аналитика карт",
+        title="Демо-аналитика",
         date_from=datetime(2026, 9, 5).date(),
         date_to=datetime(2026, 9, 5).date(),
         timezone=settings.timezone,
+        unknown_phones=unknown,
     )
     print(report)
     print("\nномеров карт в базе нет")

@@ -15,6 +15,7 @@ from bot.demo import run_demo
 from bot.parsers.chat1 import parse_chat1
 from bot.parsers.chat2 import parse_chat2
 from bot.parsers.chat3 import parse_chat3
+from bot.parsers.phones import format_phone
 from bot.parsers.redact import redact_card_numbers
 
 
@@ -53,6 +54,8 @@ def _print_parse_result(result) -> None:
             f"{' без ЛК' if batch.without_lk else ''}"
             f"{' ' + batch.batch_ref if batch.batch_ref else ''}"
         )
+        if batch.phones:
+            print("  телефоны: " + ", ".join(format_phone(item.e164) for item in batch.phones))
         if batch.excerpt:
             print(f"  excerpt: {redact_card_numbers(batch.excerpt)}")
 

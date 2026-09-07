@@ -5,6 +5,12 @@ from datetime import date, datetime
 
 
 @dataclass(slots=True)
+class ParsedPhone:
+    e164: str
+    raw: str = ""
+
+
+@dataclass(slots=True)
 class ParsedBatch:
     bank: str
     bank_slug: str
@@ -19,6 +25,7 @@ class ParsedBatch:
     has_deposit: bool = False
     report_date: date | None = None
     excerpt: str = ""
+    phones: list[ParsedPhone] = field(default_factory=list)
 
 
 @dataclass(slots=True)

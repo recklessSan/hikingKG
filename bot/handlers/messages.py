@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
+from sqlalchemy import func, select
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.config import Settings
+from bot.db.models import PhoneDirectory
 from bot.db.session import session_scope
+from bot.handlers.commands import is_admin
 from bot.handlers.routing import author_from_message, message_datetime, parse_source, source_for_chat
 from bot.parsers.redact import redact_card_numbers
 from bot.services.ingest import IngestMeta, persist_parse_result
+from bot.services.phones import import_phones_csv
 
 logger = logging.getLogger(__name__)
 
@@ -53,3 +58,22 @@ async def on_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     else:
         logger.info("no batches parsed from %s (%s)", source, result.skipped_reason)
+
+
+async def on_csv_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not is_admin(update, settings):
+        return
+    message = update.effective_message
+    if message is None or message.document is None:
+        return
+    filename = (message.document.file_name or "").lower()
+    if not filename.endswith(".csv"):
+        return
+    telegram_file = await message.document.get_file()
+    target = Path("/tmp") / f"phones_{message.document.file_unique_id}.csv"
+    await telegram_file.download_to_drive(custom_path=str(target))
+    async with session_scope() as session:
+        imported = await import_phones_csv(session, target, source="upload")
+        total = await session.scalar(select(func.count()).select_from(PhoneDirectory)) or 0
+    await message.reply_text(f"CSV принят. Загружено: {imported}\nвсего в справочнике: {total}")

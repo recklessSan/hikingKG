@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
+from sqlalchemy import func, select
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.config import Settings
+from bot.db.models import PhoneDirectory
 from bot.db.session import session_scope
+from bot.parsers.phones import format_phone, normalize_phone
 from bot.services.ingest import fetch_batches
-from bot.services.reports import build_report, period_for_today, period_for_week
+from bot.services.phones import fetch_unknown_phones, import_phones_csv, lookup_directory, upsert_directory_phone
+from bot.services.reports import build_report, format_check_result, period_for_today, period_for_week
 
-HELP_TEXT = """Бот считает аналитику по картам без хранения номеров.
+HELP_TEXT = """Бот считает аналитику партий и проверяет телефоны из чата 1 по справочнику.
 
 Команды:
 /today — отчёт за сегодня
@@ -19,13 +24,17 @@ HELP_TEXT = """Бот считает аналитику по картам без
 /toffice — только «передано в Т-офис»
 /report 07.09.2026 — день
 /report 01.09.2026 07.09.2026 — период
+/phones — проверка телефонов за сегодня
+/check 79001234567 — найти номер в справочнике
+/phones_add 79001234567 метка — добавить номер в справочник
+/phones_reload — загрузить CSV из PHONES_FILE
 /chatid — id текущего чата
 /help — эта справка
 
-В чатах-источниках бот молча разбирает сообщения:
-1) банк, количество, кэш/без ЛК, автор, дата
-2) только блок «ПЕРЕДАНО В Т-ОФИС»
-3) формат как у чата 1 или 2 (CHAT_3_MODE)
+В админ-чат можно прислать CSV со столбцами phone,label.
+
+Чат 1: банк, количество, телефоны (проверка по базе), автор, дата.
+Чат 2: только блок «ПЕРЕДАНО В Т-ОФИС».
 """
 
 
@@ -72,6 +81,10 @@ async def cmd_toffice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _reply_report(update, context, period="all", event_type="t_office", title="Т-офис")
 
 
+async def cmd_phones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _reply_report(update, context, period="today", title="Проверка телефонов")
+
+
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     if not is_admin(update, settings) or not update.effective_message:
@@ -89,13 +102,70 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await _send_report(update, settings, date_from, date_to, title="Отчёт")
 
 
+async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not is_admin(update, settings) or not update.effective_message:
+        return
+    raw = " ".join(context.args or []).strip()
+    phone = normalize_phone(raw)
+    if phone is None:
+        await update.effective_message.reply_text("Пришлите телефон: /check +7 900 123-45-67")
+        return
+    async with session_scope() as session:
+        row = await lookup_directory(session, phone)
+    await update.effective_message.reply_text(
+        format_check_result(phone, row.label if row else None, row is not None)
+    )
+
+
+async def cmd_phones_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not is_admin(update, settings) or not update.effective_message:
+        return
+    args = list(context.args or [])
+    if not args:
+        await update.effective_message.reply_text("Формат: /phones_add +7 900 123-45-67 метка")
+        return
+    phone = None
+    label = None
+    for end in range(1, len(args) + 1):
+        candidate = normalize_phone(" ".join(args[:end]))
+        if candidate:
+            phone = candidate
+            label = " ".join(args[end:]).strip() or None
+            break
+    if phone is None:
+        await update.effective_message.reply_text("Не похоже на телефон. Пример: /phones_add 79001234567 склад")
+        return
+    async with session_scope() as session:
+        row = await upsert_directory_phone(session, phone, label=label, source="manual")
+    if row is None:
+        await update.effective_message.reply_text("Номер не сохранён")
+        return
+    await update.effective_message.reply_text(f"добавлен {format_phone(row.phone)}" + (f" ({row.label})" if row.label else ""))
+
+
+async def cmd_phones_reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not is_admin(update, settings) or not update.effective_message:
+        return
+    path = Path(settings.phones_file)
+    if not path.is_file():
+        await update.effective_message.reply_text(f"файл не найден: {path}")
+        return
+    async with session_scope() as session:
+        imported = await import_phones_csv(session, path)
+        total = await session.scalar(select(func.count()).select_from(PhoneDirectory)) or 0
+    await update.effective_message.reply_text(f"загружено из CSV: {imported}\nвсего в справочнике: {total}")
+
+
 async def _reply_report(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     *,
     period: str,
     event_type: str | None = None,
-    title: str = "Аналитика карт",
+    title: str = "Аналитика",
 ) -> None:
     settings: Settings = context.application.bot_data["settings"]
     if not is_admin(update, settings) or not update.effective_message:
@@ -132,11 +202,13 @@ async def _send_report(
             date_to=date_to,
             event_type=event_type,
         )
+        unknown = await fetch_unknown_phones(session, [row.id for row in batches])
     text = build_report(
         batches,
         title=title,
         date_from=date_from,
         date_to=date_to,
         timezone=settings.timezone,
+        unknown_phones=unknown,
     )
     await update.effective_message.reply_text(text)

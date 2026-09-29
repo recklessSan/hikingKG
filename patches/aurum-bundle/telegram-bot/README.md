@@ -39,3 +39,15 @@ docker compose logs -f telegram-bot
 ```bash
 docker compose up -d telegram-bot
 ```
+
+## Если бот «молчит»
+
+1. В логах должно быть `allowed users: […]` или `NONE — set AURUM_TELEGRAM_ALLOWED_USER_IDS`.
+2. Напиши боту `/id` — он ответит числом (эта команда работает всегда).
+3. Впиши id в `.env`:
+   ```env
+   AURUM_TELEGRAM_ALLOWED_USER_IDS=123456789
+   ```
+4. `docker compose up -d --force-recreate telegram-bot`
+
+Если `allowed users: NONE` и бот всё равно молчит на `/start` — пересобери образ (баг со старым middleware на Update уже исправлен в бандле).

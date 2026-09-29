@@ -56,8 +56,13 @@ async def main() -> None:
 
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher(storage=MemoryStorage())
-    dp.update.middleware(AllowlistMiddleware())
-    dp.update.middleware(InjectApiMiddleware(api))
+    # Outer middleware on message/callback — NOT dp.update. Update middleware
+    # receives Update objects; AllowlistMiddleware answers Message/CallbackQuery
+    # and previously returned without sending anything (bot looked silent).
+    dp.message.middleware(AllowlistMiddleware())
+    dp.callback_query.middleware(AllowlistMiddleware())
+    dp.message.middleware(InjectApiMiddleware(api))
+    dp.callback_query.middleware(InjectApiMiddleware(api))
     dp.include_router(setup_routers())
 
     log.info(

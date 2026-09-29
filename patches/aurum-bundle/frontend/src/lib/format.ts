@@ -21,12 +21,17 @@ const SOM_SIGN = "\u20C0";
  * EUR, RUB, ...) exactly as compact as plain "symbol" already renders them
  * — unlike currencyDisplay: "code", which would fix CNY/HKD but turn every
  * other currency's "$1,234"/"1 234 ₽" into "USD 1,234"/"1 234 RUB". */
-function createCurrencyFormatter(currency: string, maximumFractionDigits: number): Intl.NumberFormat {
+function createCurrencyFormatter(
+  currency: string,
+  maximumFractionDigits: number,
+  minimumFractionDigits?: number,
+): Intl.NumberFormat {
   return new Intl.NumberFormat(getIntlLocale(), {
     style: "currency",
     currency,
     currencyDisplay: "narrowSymbol",
     maximumFractionDigits,
+    minimumFractionDigits: minimumFractionDigits ?? Math.min(2, maximumFractionDigits),
   });
 }
 
@@ -51,20 +56,18 @@ export function getCurrencySymbol(currency: string): string {
 // — call sites only need to pass it explicitly when formatting a value known
 // to be in a *different* currency than that setting (e.g. an account balance
 // or a transaction on a foreign-currency account).
+//
+// Always shows 2 fraction digits (kopecks / tyiyn / cents) — matches the
+// backend Numeric(14, 2) scale and the transaction form's step="0.01".
 export function formatCurrency(amount: number | string, currency: string = getCurrency()): string {
   const value = typeof amount === "string" ? Number(amount) : amount;
-  return applyCurrencyGlyphOverrides(createCurrencyFormatter(currency, 0).format(value), currency);
+  return applyCurrencyGlyphOverrides(createCurrencyFormatter(currency, 2, 2).format(value), currency);
 }
 
 /** Same currency formatting as formatCurrency, but scales decimal precision
- * down to the value's own magnitude instead of always rounding to whole
- * units — a low-cap memecoin can genuinely price at $0.000000006894, and
- * formatCurrency's fixed 0 fraction digits would render that as "$0",
- * indistinguishable from actually being worthless. Values >= 1 still show
- * just 2 decimals (a coin price doesn't need more than cents once it's
- * above a dollar). For the Crypto tab's per-coin price/holdings/avg-buy-price
- * cells and per-transaction price — anywhere a single coin's own value
- * needs to be told apart from zero, not just a portfolio-wide total. */
+ * down to the value's own magnitude for tiny crypto prices — a low-cap
+ * memecoin can genuinely price at $0.000000006894, and two fraction digits
+ * would render that as "$0.00". Values >= 1 still show 2 decimals. */
 export function formatCryptoAmount(amount: number | string, currency: string = getCurrency()): string {
   const value = typeof amount === "string" ? Number(amount) : amount;
   const abs = Math.abs(value);
@@ -76,8 +79,9 @@ export function formatCryptoAmount(amount: number | string, currency: string = g
         // that — e.g. 0.000000006894 has 8 leading zeros, so this shows
         // 12 decimal places, landing exactly on "6894" and nothing more.
         Math.min(20, Math.max(0, -Math.floor(Math.log10(abs)) - 1) + 4);
+  const minimumFractionDigits = maximumFractionDigits <= 2 ? maximumFractionDigits : 0;
   return applyCurrencyGlyphOverrides(
-    createCurrencyFormatter(currency, maximumFractionDigits).format(value),
+    createCurrencyFormatter(currency, maximumFractionDigits, minimumFractionDigits).format(value),
     currency,
   );
 }

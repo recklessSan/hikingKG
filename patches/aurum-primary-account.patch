@@ -1,7 +1,7 @@
 From f3dc43a00d0823cb6c4720d7796bdad5f517de81 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:24:30 +0000
-Subject: [PATCH] feat(accounts): allow marking a primary account
+Subject: [PATCH 1/2] feat(accounts): allow marking a primary account
 
 Add an is_primary flag so one account sorts first in lists and is
 pre-selected in expense/income forms. Setting primary clears any other;
@@ -418,6 +418,418 @@ index 6964603..5749e54 100644
  }
  
  export interface Category {
+-- 
+2.43.0
+
+
+From 0bcca2fd21fd7d83b7f0c9632a21a67715b4ad4c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 29 Sep 2026 04:39:50 +0000
+Subject: [PATCH 2/2] feat(ui): show account currency on balances and
+ transactions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Format amounts with each account's own currency (KGS uses the som
+sign ⃀). Surface the currency code on account rows, transaction
+lists, and account pickers, and let accounts set currency in the form.
+---
+ backend/app/schemas/recurring.py              |  1 +
+ backend/app/services/recurring_service.py     |  1 +
+ .../components/accounts/AccountFormModal.tsx  | 35 +++++++++++++++----
+ .../src/components/accounts/AccountList.tsx   |  4 +--
+ .../dashboard/RecentTransactionsCard.tsx      |  4 +--
+ .../recurring/RecurringFormModal.tsx          |  4 +--
+ .../components/recurring/RecurringList.tsx    |  2 +-
+ .../transactions/TransactionFormModal.tsx     |  4 +--
+ .../transactions/TransactionsTable.tsx        |  5 +--
+ frontend/src/lib/format.test.ts               | 15 ++++++++
+ frontend/src/lib/format.ts                    | 32 +++++++++++++++--
+ frontend/src/lib/i18n.ts                      |  2 ++
+ frontend/src/pages/CsvImportPage.tsx          |  7 ++--
+ frontend/src/types/index.ts                   |  2 ++
+ 14 files changed, 96 insertions(+), 22 deletions(-)
+
+diff --git a/backend/app/schemas/recurring.py b/backend/app/schemas/recurring.py
+index 5bc6443..46efe1f 100644
+--- a/backend/app/schemas/recurring.py
++++ b/backend/app/schemas/recurring.py
+@@ -50,6 +50,7 @@ class RecurringTransactionRead(BaseModel):
+     id: int
+     account_id: int
+     account_name: str
++    account_currency: str
+     category_id: int | None
+     category_name: str | None
+     category_color: str | None
+diff --git a/backend/app/services/recurring_service.py b/backend/app/services/recurring_service.py
+index e0a8ae8..9040f20 100644
+--- a/backend/app/services/recurring_service.py
++++ b/backend/app/services/recurring_service.py
+@@ -75,6 +75,7 @@ def _to_read(recurring: RecurringTransaction) -> RecurringTransactionRead:
+         id=recurring.id,
+         account_id=recurring.account_id,
+         account_name=recurring.account.name,
++        account_currency=recurring.account.currency,
+         category_id=recurring.category_id,
+         category_name=recurring.category.name if recurring.category else None,
+         category_color=recurring.category.color if recurring.category else None,
+diff --git a/frontend/src/components/accounts/AccountFormModal.tsx b/frontend/src/components/accounts/AccountFormModal.tsx
+index 59b52f2..b19f656 100644
+--- a/frontend/src/components/accounts/AccountFormModal.tsx
++++ b/frontend/src/components/accounts/AccountFormModal.tsx
+@@ -3,6 +3,7 @@ import { Dialog } from "@/components/ui/Dialog";
+ import { Button } from "@/components/ui/Button";
+ import { Input, Label, Select } from "@/components/ui/Input";
+ import { useCreateAccount, useUpdateAccount } from "@/hooks/useAccounts";
++import { CURRENCIES, getCurrencyLabel } from "@/lib/currency";
+ import { useTranslation, type TranslationKey } from "@/lib/i18n";
+ import type { Account, AccountType } from "@/types";
+ 
+@@ -14,25 +15,32 @@ interface AccountFormModalProps {
+ 
+ const ACCOUNT_TYPES: AccountType[] = ["checking", "debit_card", "savings", "credit_card", "cash", "investment", "other"];
+ 
+-const EMPTY_FORM = { name: "", type: "checking" as AccountType, is_primary: false };
++function emptyForm(defaultCurrency: string) {
++  return { name: "", type: "checking" as AccountType, currency: defaultCurrency, is_primary: false };
++}
+ 
+ export function AccountFormModal({ open, onClose, account }: AccountFormModalProps) {
+-  const { t } = useTranslation();
++  const { t, language, currency: appCurrency } = useTranslation();
+   const createAccount = useCreateAccount();
+   const updateAccount = useUpdateAccount();
+ 
+-  const [form, setForm] = useState(EMPTY_FORM);
++  const [form, setForm] = useState(() => emptyForm(appCurrency));
+   const [error, setError] = useState<string | null>(null);
+ 
+   useEffect(() => {
+     if (!open) return;
+     setForm(
+       account
+-        ? { name: account.name, type: account.type, is_primary: account.is_primary }
+-        : EMPTY_FORM,
++        ? {
++            name: account.name,
++            type: account.type,
++            currency: account.currency,
++            is_primary: account.is_primary,
++          }
++        : emptyForm(appCurrency),
+     );
+     setError(null);
+-  }, [open, account]);
++  }, [open, account, appCurrency]);
+ 
+   const isSaving = createAccount.isPending || updateAccount.isPending;
+ 
+@@ -81,6 +89,21 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
+           </Select>
+         </div>
+ 
++        <div>
++          <Label htmlFor="account-currency">{t("account.form.currencyLabel")}</Label>
++          <Select
++            id="account-currency"
++            value={form.currency}
++            onChange={(event) => setForm((prev) => ({ ...prev, currency: event.target.value }))}
++          >
++            {CURRENCIES.map((currency) => (
++              <option key={currency.code} value={currency.code}>
++                {getCurrencyLabel(currency.code, language)}
++              </option>
++            ))}
++          </Select>
++        </div>
++
+         <label className="flex items-start gap-2 text-sm text-text-secondary">
+           <input
+             type="checkbox"
+diff --git a/frontend/src/components/accounts/AccountList.tsx b/frontend/src/components/accounts/AccountList.tsx
+index 80c9629..5008f33 100644
+--- a/frontend/src/components/accounts/AccountList.tsx
++++ b/frontend/src/components/accounts/AccountList.tsx
+@@ -53,14 +53,14 @@ export function AccountList({ items, onEdit, onToggleArchived, onDelete }: Accou
+                 )}
+               </span>
+               <span className="block truncate text-xs text-text-muted">
+-                {t(`account.type.${account.type}` as TranslationKey)}
++                {t(`account.type.${account.type}` as TranslationKey)} · {account.currency}
+               </span>
+             </span>
+             <span
+               className="shrink-0 text-sm font-medium tabular-nums"
+               style={{ color: balance < 0 ? "var(--danger)" : "var(--text-primary)" }}
+             >
+-              {formatCurrency(balance)}
++              {formatCurrency(balance, account.currency)}
+             </span>
+             <span className="flex shrink-0 gap-1">
+               <button
+diff --git a/frontend/src/components/dashboard/RecentTransactionsCard.tsx b/frontend/src/components/dashboard/RecentTransactionsCard.tsx
+index 76fc26e..73844a9 100644
+--- a/frontend/src/components/dashboard/RecentTransactionsCard.tsx
++++ b/frontend/src/components/dashboard/RecentTransactionsCard.tsx
+@@ -57,7 +57,7 @@ export function RecentTransactionsCard({ year, month }: RecentTransactionsCardPr
+                   <span className="min-w-0 flex-1">
+                     <span className="block truncate text-sm text-text-primary">{tx.description}</span>
+                     <span className="block truncate text-xs text-text-muted">
+-                      {formatTransactionDate(tx.date)} · {tx.account.name}
++                      {formatTransactionDate(tx.date)} · {tx.account.name} ({tx.account.currency})
+                       {categoryLabel ? ` · ${categoryLabel}` : ""}
+                     </span>
+                   </span>
+@@ -67,7 +67,7 @@ export function RecentTransactionsCard({ year, month }: RecentTransactionsCardPr
+                     }`}
+                   >
+                     {isTransfer ? "" : isExpense ? "-" : "+"}
+-                    {formatCurrency(Number(tx.amount))}
++                    {formatCurrency(Number(tx.amount), tx.account.currency)}
+                   </span>
+                 </li>
+               );
+diff --git a/frontend/src/components/recurring/RecurringFormModal.tsx b/frontend/src/components/recurring/RecurringFormModal.tsx
+index ea042ca..e7e8959 100644
+--- a/frontend/src/components/recurring/RecurringFormModal.tsx
++++ b/frontend/src/components/recurring/RecurringFormModal.tsx
+@@ -193,7 +193,7 @@ export function RecurringFormModal({ open, onClose, recurring }: RecurringFormMo
+             </option>
+             {accounts?.map((account) => (
+               <option key={account.id} value={account.id}>
+-                {account.name}
++                {account.name} ({account.currency})
+               </option>
+             ))}
+           </Select>
+@@ -215,7 +215,7 @@ export function RecurringFormModal({ open, onClose, recurring }: RecurringFormMo
+                 ?.filter((account) => String(account.id) !== form.account_id)
+                 .map((account) => (
+                   <option key={account.id} value={account.id}>
+-                    {account.name}
++                    {account.name} ({account.currency})
+                   </option>
+                 ))}
+             </Select>
+diff --git a/frontend/src/components/recurring/RecurringList.tsx b/frontend/src/components/recurring/RecurringList.tsx
+index 6d3b935..4eb7fc2 100644
+--- a/frontend/src/components/recurring/RecurringList.tsx
++++ b/frontend/src/components/recurring/RecurringList.tsx
+@@ -65,7 +65,7 @@ export function RecurringList({ items, onPost, onEdit, onDelete, isPosting }: Re
+               }`}
+             >
+               {isTransfer ? "" : isExpense ? "-" : "+"}
+-              {formatCurrency(item.amount)}
++              {formatCurrency(item.amount, item.account_currency)}
+             </span>
+ 
+             <span className="flex shrink-0 gap-1">
+diff --git a/frontend/src/components/transactions/TransactionFormModal.tsx b/frontend/src/components/transactions/TransactionFormModal.tsx
+index d2cbb7e..7405feb 100644
+--- a/frontend/src/components/transactions/TransactionFormModal.tsx
++++ b/frontend/src/components/transactions/TransactionFormModal.tsx
+@@ -333,7 +333,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
+             </option>
+             {accounts?.map((account) => (
+               <option key={account.id} value={account.id}>
+-                {account.name}
++                {account.name} ({account.currency})
+               </option>
+             ))}
+           </Select>
+@@ -355,7 +355,7 @@ export function TransactionFormModal({ open, onClose, transaction }: Transaction
+                 ?.filter((account) => String(account.id) !== form.account_id)
+                 .map((account) => (
+                   <option key={account.id} value={account.id}>
+-                    {account.name}
++                    {account.name} ({account.currency})
+                   </option>
+                 ))}
+             </Select>
+diff --git a/frontend/src/components/transactions/TransactionsTable.tsx b/frontend/src/components/transactions/TransactionsTable.tsx
+index 59f0af8..abb34bc 100644
+--- a/frontend/src/components/transactions/TransactionsTable.tsx
++++ b/frontend/src/components/transactions/TransactionsTable.tsx
+@@ -58,7 +58,8 @@ export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: Tr
+               <span className="min-w-0 flex-1">
+                 <span className="block truncate text-sm font-medium text-text-primary">{tx.description}</span>
+                 <span className="block truncate text-xs text-text-muted">
+-                  {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {tx.account.name}
++                  {formatTransactionDate(tx.date, Boolean(onJumpToMonth))} · {tx.account.name} (
++                  {tx.account.currency})
+                   {isTransfer && tx.transfer_account_id ? ` ${t("transactions.transferSuffix")}` : ""}
+                   {categoryLabel ? ` · ${categoryLabel}` : ""}
+                   {tx.tags.length > 0 ? ` · ${tx.tags.map((tag) => tag.name).join(", ")}` : ""}
+@@ -71,7 +72,7 @@ export function TransactionsTable({ items, onEdit, onDelete, onJumpToMonth }: Tr
+                 }`}
+               >
+                 {isTransfer ? "" : isExpense ? "-" : "+"}
+-                {formatCurrency(tx.amount)}
++                {formatCurrency(tx.amount, tx.account.currency)}
+               </span>
+ 
+               <span className="flex shrink-0 gap-1">
+diff --git a/frontend/src/lib/format.test.ts b/frontend/src/lib/format.test.ts
+index 5c26e67..382bdaa 100644
+--- a/frontend/src/lib/format.test.ts
++++ b/frontend/src/lib/format.test.ts
+@@ -5,6 +5,7 @@ import {
+   formatCurrency,
+   formatSignedCurrency,
+   formatTransactionDate,
++  getCurrencySymbol,
+   getIntlLocale,
+   getMonthLabels,
+   maskAmount,
+@@ -46,6 +47,20 @@ describe("formatCurrency", () => {
+   it("accepts a numeric string the same as a number", () => {
+     expect(formatCurrency("614", "USD")).toBe(formatCurrency(614, "USD"));
+   });
++
++  it("renders Kyrgyz som with the som sign, not the ISO code", () => {
++    const formatted = formatCurrency(614, "KGS");
++    expect(formatted).toContain("\u20C0");
++    expect(formatted).not.toContain("KGS");
++  });
++});
++
++describe("getCurrencySymbol", () => {
++  beforeEach(() => setLanguage("en"));
++
++  it("returns the som sign for KGS", () => {
++    expect(getCurrencySymbol("KGS")).toBe("\u20C0");
++  });
+ });
+ 
+ describe("formatCryptoAmount", () => {
+diff --git a/frontend/src/lib/format.ts b/frontend/src/lib/format.ts
+index 4536448..94e2f57 100644
+--- a/frontend/src/lib/format.ts
++++ b/frontend/src/lib/format.ts
+@@ -5,6 +5,11 @@ export function getIntlLocale(language: Language = getLanguage()): string {
+   return language === "ru" ? "ru-RU" : "en-US";
+ }
+ 
++/** Official Kyrgyz som sign (U+20C0). Some older ICU builds still emit the
++ * literal "KGS" code even with currencyDisplay: "narrowSymbol"; we force the
++ * glyph so som amounts never look like a bare ISO code. */
++const SOM_SIGN = "\u20C0";
++
+ /** Builds the currency formatter every money helper here shares, so amounts
+  * are labelled identically everywhere in the app.
+  *
+@@ -25,12 +30,30 @@ function createCurrencyFormatter(currency: string, maximumFractionDigits: number
+   });
+ }
+ 
++/** Applies KGS → ⃀ when Intl falls back to the ISO code. */
++function applyCurrencyGlyphOverrides(formatted: string, currency: string): string {
++  if (currency.toUpperCase() !== "KGS") return formatted;
++  return formatted.includes(SOM_SIGN) ? formatted : formatted.replace(/\bKGS\b/g, SOM_SIGN);
++}
++
++/** Narrow symbol for a currency code — ⃀ for KGS, ₽ for RUB, $ for USD, etc.
++ * Used next to account names where the amount isn't being formatted. */
++export function getCurrencySymbol(currency: string): string {
++  const code = currency.toUpperCase();
++  if (code === "KGS") return SOM_SIGN;
++  const part = createCurrencyFormatter(code, 0)
++    .formatToParts(0)
++    .find((entry) => entry.type === "currency");
++  return part?.value && part.value !== code ? part.value : code;
++}
++
+ // `currency` defaults to the app's primary currency setting (Settings page)
+ // — call sites only need to pass it explicitly when formatting a value known
+-// to be in a *different* currency than that setting.
++// to be in a *different* currency than that setting (e.g. an account balance
++// or a transaction on a foreign-currency account).
+ export function formatCurrency(amount: number | string, currency: string = getCurrency()): string {
+   const value = typeof amount === "string" ? Number(amount) : amount;
+-  return createCurrencyFormatter(currency, 0).format(value);
++  return applyCurrencyGlyphOverrides(createCurrencyFormatter(currency, 0).format(value), currency);
+ }
+ 
+ /** Same currency formatting as formatCurrency, but scales decimal precision
+@@ -53,7 +76,10 @@ export function formatCryptoAmount(amount: number | string, currency: string = g
+         // that — e.g. 0.000000006894 has 8 leading zeros, so this shows
+         // 12 decimal places, landing exactly on "6894" and nothing more.
+         Math.min(20, Math.max(0, -Math.floor(Math.log10(abs)) - 1) + 4);
+-  return createCurrencyFormatter(currency, maximumFractionDigits).format(value);
++  return applyCurrencyGlyphOverrides(
++    createCurrencyFormatter(currency, maximumFractionDigits).format(value),
++    currency,
++  );
+ }
+ 
+ export function formatSignedCurrency(amount: number | string, currency: string = getCurrency()): string {
+diff --git a/frontend/src/lib/i18n.ts b/frontend/src/lib/i18n.ts
+index f16309f..a39cacf 100644
+--- a/frontend/src/lib/i18n.ts
++++ b/frontend/src/lib/i18n.ts
+@@ -466,6 +466,7 @@ const ru = {
+   "account.form.nameLabel": "Название",
+   "account.form.namePlaceholder": "Основной счёт, накопления, наличные…",
+   "account.form.typeLabel": "Тип",
++  "account.form.currencyLabel": "Валюта",
+   "account.form.primaryLabel": "Основной счёт",
+   "account.form.primaryHint": "Будет первым в списке и подставляться по умолчанию в расходах и доходах.",
+   "account.form.saveError": "Не удалось сохранить счёт. Проверьте данные и попробуйте снова.",
+@@ -994,6 +995,7 @@ const en: Record<keyof typeof ru, string> = {
+   "account.form.nameLabel": "Name",
+   "account.form.namePlaceholder": "Main account, savings, cash…",
+   "account.form.typeLabel": "Type",
++  "account.form.currencyLabel": "Currency",
+   "account.form.primaryLabel": "Primary account",
+   "account.form.primaryHint": "Shown first in account lists and pre-selected for new expenses and income.",
+   "account.form.saveError": "Failed to save the account. Check the data and try again.",
+diff --git a/frontend/src/pages/CsvImportPage.tsx b/frontend/src/pages/CsvImportPage.tsx
+index 44d76b6..76d0b85 100644
+--- a/frontend/src/pages/CsvImportPage.tsx
++++ b/frontend/src/pages/CsvImportPage.tsx
+@@ -403,7 +403,7 @@ export function CsvImportPage() {
+             </option>
+             {accounts?.map((account) => (
+               <option key={account.id} value={account.id}>
+-                {account.name}
++                {account.name} ({account.currency})
+               </option>
+             ))}
+           </Select>
+@@ -669,7 +669,10 @@ export function CsvImportPage() {
+                               }`}
+                             >
+                               {item.type === "expense" ? "-" : "+"}
+-                              {formatCurrency(item.amount)}
++                              {formatCurrency(
++                                item.amount,
++                                accounts?.find((account) => String(account.id) === accountId)?.currency,
++                              )}
+                             </td>
+                           </tr>
+                         ))}
+diff --git a/frontend/src/types/index.ts b/frontend/src/types/index.ts
+index 5749e54..8cc0030 100644
+--- a/frontend/src/types/index.ts
++++ b/frontend/src/types/index.ts
+@@ -25,6 +25,7 @@ export interface AccountWithBalance extends Account {
+ export interface AccountInput {
+   name: string;
+   type: AccountType;
++  currency?: string;
+   is_primary?: boolean;
+ }
+ 
+@@ -131,6 +132,7 @@ export interface RecurringTransaction {
+   id: number;
+   account_id: number;
+   account_name: string;
++  account_currency: string;
+   category_id: number | null;
+   category_name: string | null;
+   category_color: string | null;
 -- 
 2.43.0
 

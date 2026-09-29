@@ -15,6 +15,15 @@ cd ~/KR-DEV/Aurum
 docker compose up -d --build
 ```
 
+**Важно:** рабочие настройки — в файле `.env` (не `.env.example`).
+Установщик больше не перезаписывает `.env` и существующий `.env.example`.
+
+Проверка порта/пароля:
+
+```bash
+grep -E 'WEB_PORT|POSTGRES_PASSWORD|TELEGRAM|BIND' ~/KR-DEV/Aurum/.env
+```
+
 ## Telegram-бот (aiogram)
 
 После установки бандла в `.env`:

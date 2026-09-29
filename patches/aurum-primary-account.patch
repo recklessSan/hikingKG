@@ -1,7 +1,7 @@
 From f3dc43a00d0823cb6c4720d7796bdad5f517de81 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:24:30 +0000
-Subject: [PATCH 1/5] feat(accounts): allow marking a primary account
+Subject: [PATCH 1/6] feat(accounts): allow marking a primary account
 
 Add an is_primary flag so one account sorts first in lists and is
 pre-selected in expense/income forms. Setting primary clears any other;
@@ -425,7 +425,7 @@ index 6964603..5749e54 100644
 From 0bcca2fd21fd7d83b7f0c9632a21a67715b4ad4c Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:39:50 +0000
-Subject: [PATCH 2/5] feat(ui): show account currency on balances and
+Subject: [PATCH 2/6] feat(ui): show account currency on balances and
  transactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -837,7 +837,7 @@ index 5749e54..8cc0030 100644
 From 91a41e2f856c3c2da8bfd4febe99508423f704b5 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 05:16:47 +0000
-Subject: [PATCH 3/5] fix(ui): show two decimal places on currency amounts
+Subject: [PATCH 3/6] fix(ui): show two decimal places on currency amounts
 
 Stop rounding dashboard and transaction amounts to whole units so
 kopecks/cents stay visible (matches Numeric(14, 2) storage).
@@ -964,7 +964,7 @@ index 94e2f57..88f0e75 100644
 From 6508c32a5596cd0df9c43c6154ad86334eab24e9 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 05:58:15 +0000
-Subject: [PATCH 4/5] =?UTF-8?q?fix(ui):=20use=20underlined=20=D1=81=20as?=
+Subject: [PATCH 4/6] =?UTF-8?q?fix(ui):=20use=20underlined=20=D1=81=20as?=
  =?UTF-8?q?=20Kyrgyz=20som=20currency=20mark?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -1044,7 +1044,7 @@ index 88f0e75..38916bd 100644
 From 89ed46a170d5d2744320b3e69cfa353b3a8fc40f Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 06:02:30 +0000
-Subject: [PATCH 5/5] feat(dashboard): break summary down by account currency
+Subject: [PATCH 5/6] feat(dashboard): break summary down by account currency
 
 Stop mixing KGS/USD/RUB on the overview. API returns by_currency
 slices; the UI renders separate stat cards and category donuts per
@@ -1797,6 +1797,772 @@ index 8cc0030..a4d37dc 100644
  }
  
  export type AssetClass = "investments" | "crypto" | "real_estate" | "vehicles" | "precious_metals" | "other";
+-- 
+2.43.0
+
+
+From c4cc50e0982a47de203750dd05fcde7e94195247 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 29 Sep 2026 06:23:14 +0000
+Subject: [PATCH 6/6] feat(telegram-bot): add aiogram expense bot container
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stepwise /expense flow (amount → description → account → category →
+confirm) posts to the Aurum API. Token may be empty; the container
+idles until configured. Access limited by TELEGRAM_ALLOWED_USER_IDS.
+---
+ .env.example                          |  13 ++
+ docker-compose.yml                    |  17 +++
+ telegram-bot/.dockerignore            |   6 +
+ telegram-bot/Dockerfile               |  17 +++
+ telegram-bot/README.md                |  41 ++++++
+ telegram-bot/bot/__init__.py          |   1 +
+ telegram-bot/bot/__main__.py          |  75 +++++++++++
+ telegram-bot/bot/api.py               |  87 ++++++++++++
+ telegram-bot/bot/config.py            |  46 +++++++
+ telegram-bot/bot/handlers/__init__.py |  10 ++
+ telegram-bot/bot/handlers/expense.py  | 185 ++++++++++++++++++++++++++
+ telegram-bot/bot/handlers/start.py    |  29 ++++
+ telegram-bot/bot/keyboards.py         |  33 +++++
+ telegram-bot/bot/middlewares.py       |  44 ++++++
+ telegram-bot/bot/states.py            |   9 ++
+ telegram-bot/requirements.txt         |   3 +
+ 16 files changed, 616 insertions(+)
+ create mode 100644 telegram-bot/.dockerignore
+ create mode 100644 telegram-bot/Dockerfile
+ create mode 100644 telegram-bot/README.md
+ create mode 100644 telegram-bot/bot/__init__.py
+ create mode 100644 telegram-bot/bot/__main__.py
+ create mode 100644 telegram-bot/bot/api.py
+ create mode 100644 telegram-bot/bot/config.py
+ create mode 100644 telegram-bot/bot/handlers/__init__.py
+ create mode 100644 telegram-bot/bot/handlers/expense.py
+ create mode 100644 telegram-bot/bot/handlers/start.py
+ create mode 100644 telegram-bot/bot/keyboards.py
+ create mode 100644 telegram-bot/bot/middlewares.py
+ create mode 100644 telegram-bot/bot/states.py
+ create mode 100644 telegram-bot/requirements.txt
+
+diff --git a/.env.example b/.env.example
+index 4320fde..b4bd8f8 100644
+--- a/.env.example
++++ b/.env.example
+@@ -72,3 +72,16 @@ AURUM_BIND_ADDRESS=127.0.0.1
+ # address bar here too: the LAN IP (192.168.1.50), your domain
+ # (aurum.example.com), a .local name. Set it to * to turn the check off.
+ AURUM_ALLOWED_HOSTS=localhost 127.0.0.1
++
++# --- Telegram bot (optional, aiogram) ---
++# Leave the token empty and the telegram-bot container idles safely.
++# Create a bot with @BotFather, paste the token here, then:
++#   docker compose up -d --build telegram-bot
++# Message the bot /id to learn your numeric Telegram user id, put it in
++# AURUM_TELEGRAM_ALLOWED_USER_IDS (comma-separated if several), restart.
++AURUM_TELEGRAM_BOT_TOKEN=
++AURUM_TELEGRAM_ALLOWED_USER_IDS=
++AURUM_TELEGRAM_API_BASE=http://backend:8000/api
++# Optional overrides — by default compose reuses AURUM_BASIC_AUTH_USER/PASSWORD.
++AURUM_TELEGRAM_BASIC_AUTH_USER=
++AURUM_TELEGRAM_BASIC_AUTH_PASSWORD=
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 1e28e2d..0248acc 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -74,5 +74,22 @@ services:
+     depends_on:
+       - backend
+ 
++  telegram-bot:
++    build: ./telegram-bot
++    restart: unless-stopped
++    security_opt:
++      - no-new-privileges:true
++    environment:
++      AURUM_TELEGRAM_BOT_TOKEN: ${AURUM_TELEGRAM_BOT_TOKEN:-}
++      AURUM_TELEGRAM_ALLOWED_USER_IDS: ${AURUM_TELEGRAM_ALLOWED_USER_IDS:-}
++      AURUM_TELEGRAM_API_BASE: ${AURUM_TELEGRAM_API_BASE:-http://backend:8000/api}
++      # Bot reuses the app basic-auth pair when present (see bot/config.py).
++      AURUM_BASIC_AUTH_USER: ${AURUM_BASIC_AUTH_USER:-}
++      AURUM_BASIC_AUTH_PASSWORD: ${AURUM_BASIC_AUTH_PASSWORD:-}
++      AURUM_TELEGRAM_BASIC_AUTH_USER: ${AURUM_TELEGRAM_BASIC_AUTH_USER:-}
++      AURUM_TELEGRAM_BASIC_AUTH_PASSWORD: ${AURUM_TELEGRAM_BASIC_AUTH_PASSWORD:-}
++    depends_on:
++      - backend
++
+ volumes:
+   aurum_pgdata:
+diff --git a/telegram-bot/.dockerignore b/telegram-bot/.dockerignore
+new file mode 100644
+index 0000000..a45be8b
+--- /dev/null
++++ b/telegram-bot/.dockerignore
+@@ -0,0 +1,6 @@
++__pycache__
++*.pyc
++.venv
++.env
++.git
++README.md
+diff --git a/telegram-bot/Dockerfile b/telegram-bot/Dockerfile
+new file mode 100644
+index 0000000..73c3319
+--- /dev/null
++++ b/telegram-bot/Dockerfile
+@@ -0,0 +1,17 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++ENV PYTHONDONTWRITEBYTECODE=1 \
++    PYTHONUNBUFFERED=1 \
++    PIP_NO_CACHE_DIR=1
++
++COPY requirements.txt .
++RUN pip install --upgrade pip && pip install -r requirements.txt
++
++COPY bot ./bot
++
++RUN useradd --create-home --uid 10001 aurum
++USER aurum
++
++CMD ["python", "-m", "bot"]
+diff --git a/telegram-bot/README.md b/telegram-bot/README.md
+new file mode 100644
+index 0000000..bc22403
+--- /dev/null
++++ b/telegram-bot/README.md
+@@ -0,0 +1,41 @@
++# Aurum Telegram bot (aiogram)
++
++Пошаговый бот для записи **расходов** в Aurum через HTTP API.
++
++## Диалог
++
++1. `/expense` → сумма  
++2. описание  
++3. выбор счёта (кнопки)  
++4. выбор категории расходов (кнопки)  
++5. подтверждение → `POST /api/transactions`
++
++## Настройка (.env)
++
++```env
++AURUM_TELEGRAM_BOT_TOKEN=123456:ABC...   # от @BotFather
++AURUM_TELEGRAM_ALLOWED_USER_IDS=123456789  # ваш id (/id в боте)
++```
++
++Если в Aurum включён basic auth:
++
++```env
++AURUM_TELEGRAM_BASIC_AUTH_USER=...
++AURUM_TELEGRAM_BASIC_AUTH_PASSWORD=...
++```
++
++(в `docker-compose` они по умолчанию подтягиваются из `AURUM_BASIC_AUTH_*`)
++
++## Запуск
++
++```bash
++cd ~/KR-DEV/Aurum
++docker compose up -d --build telegram-bot
++docker compose logs -f telegram-bot
++```
++
++Пока токен пустой, контейнер **не падает** — ждёт в idle. После вставки токена:
++
++```bash
++docker compose up -d telegram-bot
++```
+diff --git a/telegram-bot/bot/__init__.py b/telegram-bot/bot/__init__.py
+new file mode 100644
+index 0000000..7c7ac6c
+--- /dev/null
++++ b/telegram-bot/bot/__init__.py
+@@ -0,0 +1 @@
++"""Aurum Telegram bot — stepwise expense entry via the Aurum HTTP API."""
+diff --git a/telegram-bot/bot/__main__.py b/telegram-bot/bot/__main__.py
+new file mode 100644
+index 0000000..ed038b8
+--- /dev/null
++++ b/telegram-bot/bot/__main__.py
+@@ -0,0 +1,75 @@
++from __future__ import annotations
++
++import asyncio
++import logging
++import sys
++
++from aiogram import BaseMiddleware, Bot, Dispatcher
++from aiogram.fsm.storage.memory import MemoryStorage
++
++from bot.api import AurumClient
++from bot.config import get_settings
++from bot.handlers import setup_routers
++from bot.middlewares import AllowlistMiddleware
++
++logging.basicConfig(
++    level=logging.INFO,
++    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
++)
++log = logging.getLogger("aurum-telegram-bot")
++
++
++class InjectApiMiddleware(BaseMiddleware):
++    def __init__(self, api: AurumClient) -> None:
++        self.api = api
++
++    async def __call__(self, handler, event, data):
++        data["api"] = self.api
++        return await handler(event, data)
++
++
++async def _idle_without_token() -> None:
++    log.warning(
++        "AURUM_TELEGRAM_BOT_TOKEN is empty — bot idle. "
++        "Set the token in .env and restart the telegram-bot container."
++    )
++    while True:
++        await asyncio.sleep(3600)
++
++
++async def main() -> None:
++    settings = get_settings()
++    if not settings.telegram_bot_token.strip():
++        await _idle_without_token()
++        return
++
++    api = AurumClient()
++    for attempt in range(60):
++        if await api.health():
++            break
++        log.info("Waiting for Aurum API at %s (%s/60)…", settings.telegram_api_base, attempt + 1)
++        await asyncio.sleep(2)
++    else:
++        log.error("Aurum API did not become healthy; exiting so Docker can restart us.")
++        await api.aclose()
++        sys.exit(1)
++
++    bot = Bot(token=settings.telegram_bot_token)
++    dp = Dispatcher(storage=MemoryStorage())
++    dp.update.middleware(AllowlistMiddleware())
++    dp.update.middleware(InjectApiMiddleware(api))
++    dp.include_router(setup_routers())
++
++    log.info(
++        "Aurum telegram bot starting (allowed users: %s)",
++        sorted(settings.allowed_user_ids()) or "NONE — set AURUM_TELEGRAM_ALLOWED_USER_IDS",
++    )
++    try:
++        await dp.start_polling(bot)
++    finally:
++        await api.aclose()
++        await bot.session.close()
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
+diff --git a/telegram-bot/bot/api.py b/telegram-bot/bot/api.py
+new file mode 100644
+index 0000000..5b21750
+--- /dev/null
++++ b/telegram-bot/bot/api.py
+@@ -0,0 +1,87 @@
++"""Thin httpx client for the Aurum REST API (accounts / categories / txns)."""
++from __future__ import annotations
++
++from datetime import date
++from decimal import Decimal
++from typing import Any
++
++import httpx
++
++from bot.config import get_settings
++
++
++class AurumApiError(RuntimeError):
++    def __init__(self, message: str, status_code: int | None = None):
++        super().__init__(message)
++        self.status_code = status_code
++
++
++class AurumClient:
++    def __init__(self) -> None:
++        settings = get_settings()
++        auth = None
++        pair = settings.api_basic_auth()
++        if pair:
++            auth = httpx.BasicAuth(pair[0], pair[1])
++
++        self._client = httpx.AsyncClient(
++            base_url=settings.telegram_api_base.rstrip("/"),
++            auth=auth,
++            timeout=30.0,
++        )
++
++    async def aclose(self) -> None:
++        await self._client.aclose()
++
++    async def _get(self, path: str) -> Any:
++        response = await self._client.get(path)
++        if response.status_code >= 400:
++            raise AurumApiError(f"GET {path} → {response.status_code}: {response.text}", response.status_code)
++        return response.json()
++
++    async def _post(self, path: str, payload: dict[str, Any]) -> Any:
++        response = await self._client.post(path, json=payload)
++        if response.status_code >= 400:
++            raise AurumApiError(f"POST {path} → {response.status_code}: {response.text}", response.status_code)
++        return response.json()
++
++    async def health(self) -> bool:
++        try:
++            data = await self._get("/health")
++            return data.get("status") == "ok"
++        except Exception:
++            return False
++
++    async def list_accounts(self) -> list[dict[str, Any]]:
++        rows = await self._get("/accounts")
++        return [row for row in rows if not row.get("is_archived")]
++
++    async def list_expense_categories(self) -> list[dict[str, Any]]:
++        rows = await self._get("/categories")
++        # Top-level expense categories only — keeps the inline keyboard short.
++        return [
++            row
++            for row in rows
++            if row.get("kind") == "expense" and row.get("parent_id") is None
++        ]
++
++    async def create_expense(
++        self,
++        *,
++        account_id: int,
++        category_id: int,
++        amount: Decimal,
++        description: str,
++        when: date | None = None,
++    ) -> dict[str, Any]:
++        payload = {
++            "account_id": account_id,
++            "category_id": category_id,
++            "transfer_account_id": None,
++            "type": "expense",
++            "amount": str(amount),
++            "description": description,
++            "date": (when or date.today()).isoformat(),
++            "tag_ids": [],
++        }
++        return await self._post("/transactions", payload)
+diff --git a/telegram-bot/bot/config.py b/telegram-bot/bot/config.py
+new file mode 100644
+index 0000000..b6f4532
+--- /dev/null
++++ b/telegram-bot/bot/config.py
+@@ -0,0 +1,46 @@
++from functools import lru_cache
++
++from pydantic import Field
++from pydantic_settings import BaseSettings, SettingsConfigDict
++
++
++class Settings(BaseSettings):
++    model_config = SettingsConfigDict(env_prefix="AURUM_", extra="ignore")
++
++    # Empty until the user pastes a token from @BotFather — the process
++    # then idles instead of crashing compose.
++    telegram_bot_token: str = ""
++    # Comma-separated Telegram user ids allowed to talk to the bot.
++    # Empty = deny everyone (safer default than open access).
++    telegram_allowed_user_ids: str = ""
++
++    # In-compose the backend is reachable as http://backend:8000.
++    telegram_api_base: str = "http://backend:8000/api"
++    # Prefer AURUM_TELEGRAM_BASIC_AUTH_*; fall back to the app's
++    # AURUM_BASIC_AUTH_* so one pair covers UI + bot.
++    telegram_basic_auth_user: str = ""
++    telegram_basic_auth_password: str = ""
++    basic_auth_user: str = ""
++    basic_auth_password: str = ""
++
++    def allowed_user_ids(self) -> set[int]:
++        if not self.telegram_allowed_user_ids.strip():
++            return set()
++        ids: set[int] = set()
++        for part in self.telegram_allowed_user_ids.split(","):
++            part = part.strip()
++            if part:
++                ids.add(int(part))
++        return ids
++
++    def api_basic_auth(self) -> tuple[str, str] | None:
++        user = self.telegram_basic_auth_user or self.basic_auth_user
++        password = self.telegram_basic_auth_password or self.basic_auth_password
++        if user and password:
++            return user, password
++        return None
++
++
++@lru_cache
++def get_settings() -> Settings:
++    return Settings()
+diff --git a/telegram-bot/bot/handlers/__init__.py b/telegram-bot/bot/handlers/__init__.py
+new file mode 100644
+index 0000000..a69289b
+--- /dev/null
++++ b/telegram-bot/bot/handlers/__init__.py
+@@ -0,0 +1,10 @@
++from aiogram import Router
++
++from bot.handlers import expense, start
++
++
++def setup_routers() -> Router:
++    root = Router()
++    root.include_router(start.router)
++    root.include_router(expense.router)
++    return root
+diff --git a/telegram-bot/bot/handlers/expense.py b/telegram-bot/bot/handlers/expense.py
+new file mode 100644
+index 0000000..7f0e602
+--- /dev/null
++++ b/telegram-bot/bot/handlers/expense.py
+@@ -0,0 +1,185 @@
++from __future__ import annotations
++
++from decimal import Decimal, InvalidOperation
++
++from aiogram import F, Router
++from aiogram.filters import Command
++from aiogram.fsm.context import FSMContext
++from aiogram.types import CallbackQuery, Message
++
++from bot.api import AurumApiError, AurumClient
++from bot.keyboards import accounts_keyboard, categories_keyboard, confirm_keyboard
++from bot.states import ExpenseFlow
++
++router = Router()
++
++
++def _parse_amount(text: str) -> Decimal | None:
++    cleaned = text.strip().replace(" ", "").replace(",", ".")
++    try:
++        amount = Decimal(cleaned)
++    except (InvalidOperation, ValueError):
++        return None
++    if amount <= 0:
++        return None
++    return amount.quantize(Decimal("0.01"))
++
++
++async def _start_expense(message: Message, state: FSMContext) -> None:
++    await state.clear()
++    await state.set_state(ExpenseFlow.amount)
++    await message.answer(
++        "Шаг 1/4 — сумма расхода\n"
++        "Напишите число, например: `150.50`",
++        parse_mode="Markdown",
++    )
++
++
++@router.message(Command("expense"))
++async def cmd_expense(message: Message, state: FSMContext) -> None:
++    await _start_expense(message, state)
++
++
++@router.message(F.text.regexp(r"(?i)^расход$"))
++async def text_expense(message: Message, state: FSMContext) -> None:
++    await _start_expense(message, state)
++
++
++@router.message(ExpenseFlow.amount)
++async def step_amount(message: Message, state: FSMContext) -> None:
++    amount = _parse_amount(message.text or "")
++    if amount is None:
++        await message.answer("Не понял сумму. Пример: `200` или `45.90`", parse_mode="Markdown")
++        return
++    await state.update_data(amount=str(amount))
++    await state.set_state(ExpenseFlow.description)
++    await message.answer("Шаг 2/4 — описание\nНапишите коротко, на что потратили (например: продукты).")
++
++
++@router.message(ExpenseFlow.description)
++async def step_description(message: Message, state: FSMContext, api: AurumClient) -> None:
++    description = (message.text or "").strip()
++    if len(description) < 1:
++        await message.answer("Описание не может быть пустым. Напишите ещё раз.")
++        return
++    if len(description) > 255:
++        await message.answer("Слишком длинно (макс. 255 символов). Сократите.")
++        return
++
++    await state.update_data(description=description)
++    try:
++        accounts = await api.list_accounts()
++    except AurumApiError as exc:
++        await state.clear()
++        await message.answer(f"Не удалось загрузить счета: {exc}")
++        return
++
++    if not accounts:
++        await state.clear()
++        await message.answer("В Aurum нет счетов. Создайте счёт в приложении и повторите.")
++        return
++
++    await state.set_state(ExpenseFlow.account)
++    await message.answer("Шаг 3/4 — счёт", reply_markup=accounts_keyboard(accounts))
++
++
++@router.callback_query(ExpenseFlow.account, F.data.startswith("acc:"))
++async def step_account(callback: CallbackQuery, state: FSMContext, api: AurumClient) -> None:
++    account_id = int(callback.data.split(":", 1)[1])
++    try:
++        accounts = await api.list_accounts()
++        categories = await api.list_expense_categories()
++    except AurumApiError as exc:
++        await state.clear()
++        await callback.message.answer(f"Ошибка API: {exc}")
++        await callback.answer()
++        return
++
++    account = next((row for row in accounts if row["id"] == account_id), None)
++    if account is None:
++        await callback.answer("Счёт не найден", show_alert=True)
++        return
++
++    await state.update_data(
++        account_id=account_id,
++        account_name=account["name"],
++        account_currency=account["currency"],
++    )
++
++    if not categories:
++        await state.clear()
++        await callback.message.edit_text("Нет категорий расходов. Добавьте их в Aurum.")
++        await callback.answer()
++        return
++
++    await state.set_state(ExpenseFlow.category)
++    await callback.message.edit_text(
++        f"Счёт: {account['name']} ({account['currency']})\n\nШаг 4/4 — категория",
++        reply_markup=categories_keyboard(categories),
++    )
++    await callback.answer()
++
++
++@router.callback_query(ExpenseFlow.category, F.data.startswith("cat:"))
++async def step_category(callback: CallbackQuery, state: FSMContext, api: AurumClient) -> None:
++    category_id = int(callback.data.split(":", 1)[1])
++    try:
++        categories = await api.list_expense_categories()
++    except AurumApiError as exc:
++        await state.clear()
++        await callback.message.answer(f"Ошибка API: {exc}")
++        await callback.answer()
++        return
++
++    category = next((row for row in categories if row["id"] == category_id), None)
++    if category is None:
++        await callback.answer("Категория не найдена", show_alert=True)
++        return
++
++    await state.update_data(category_id=category_id, category_name=category["name"])
++    data = await state.get_data()
++    await state.set_state(ExpenseFlow.confirm)
++    await callback.message.edit_text(
++        "Проверьте расход:\n\n"
++        f"• Сумма: {data['amount']} {data['account_currency']}\n"
++        f"• Описание: {data['description']}\n"
++        f"• Счёт: {data['account_name']}\n"
++        f"• Категория: {data['category_name']}\n\n"
++        "Сохранить в Aurum?",
++        reply_markup=confirm_keyboard(),
++    )
++    await callback.answer()
++
++
++@router.callback_query(ExpenseFlow.confirm, F.data == "confirm:yes")
++async def step_confirm(callback: CallbackQuery, state: FSMContext, api: AurumClient) -> None:
++    data = await state.get_data()
++    try:
++        created = await api.create_expense(
++            account_id=int(data["account_id"]),
++            category_id=int(data["category_id"]),
++            amount=Decimal(data["amount"]),
++            description=data["description"],
++        )
++    except AurumApiError as exc:
++        await callback.message.edit_text(f"Не удалось сохранить: {exc}")
++        await state.clear()
++        await callback.answer()
++        return
++
++    await state.clear()
++    await callback.message.edit_text(
++        f"Готово. Расход #{created.get('id')} записан:\n"
++        f"{data['amount']} {data['account_currency']} — {data['description']}\n"
++        f"{data['account_name']} · {data['category_name']}\n\n"
++        "/expense — ещё один"
++    )
++    await callback.answer("Сохранено")
++
++
++@router.callback_query(F.data == "cancel")
++async def step_cancel(callback: CallbackQuery, state: FSMContext) -> None:
++    await state.clear()
++    if callback.message:
++        await callback.message.edit_text("Отменено. /expense — начать заново.")
++    await callback.answer()
+diff --git a/telegram-bot/bot/handlers/start.py b/telegram-bot/bot/handlers/start.py
+new file mode 100644
+index 0000000..a294ed9
+--- /dev/null
++++ b/telegram-bot/bot/handlers/start.py
+@@ -0,0 +1,29 @@
++from aiogram import Router
++from aiogram.filters import Command, CommandStart
++from aiogram.fsm.context import FSMContext
++from aiogram.types import Message
++
++router = Router()
++
++
++@router.message(CommandStart())
++async def cmd_start(message: Message, state: FSMContext) -> None:
++    await state.clear()
++    await message.answer(
++        "Привет! Я бот Aurum — записываю расходы в вашу базу.\n\n"
++        "Команды:\n"
++        "/expense — добавить расход (пошагово)\n"
++        "/cancel — отменить текущий диалог\n"
++        "/id — показать ваш Telegram user id"
++    )
++
++
++@router.message(Command("id"))
++async def cmd_id(message: Message) -> None:
++    await message.answer(f"Ваш Telegram user id: `{message.from_user.id}`", parse_mode="Markdown")
++
++
++@router.message(Command("cancel"))
++async def cmd_cancel(message: Message, state: FSMContext) -> None:
++    await state.clear()
++    await message.answer("Отменено. /expense — начать заново.")
+diff --git a/telegram-bot/bot/keyboards.py b/telegram-bot/bot/keyboards.py
+new file mode 100644
+index 0000000..880773a
+--- /dev/null
++++ b/telegram-bot/bot/keyboards.py
+@@ -0,0 +1,33 @@
++from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
++from aiogram.utils.keyboard import InlineKeyboardBuilder
++
++
++def accounts_keyboard(accounts: list[dict]) -> InlineKeyboardMarkup:
++    builder = InlineKeyboardBuilder()
++    for account in accounts:
++        primary = " ★" if account.get("is_primary") else ""
++        label = f"{account['name']} ({account['currency']}){primary}"
++        builder.button(text=label, callback_data=f"acc:{account['id']}")
++    builder.button(text="❌ Отмена", callback_data="cancel")
++    builder.adjust(1)
++    return builder.as_markup()
++
++
++def categories_keyboard(categories: list[dict]) -> InlineKeyboardMarkup:
++    builder = InlineKeyboardBuilder()
++    for category in categories:
++        builder.button(text=category["name"], callback_data=f"cat:{category['id']}")
++    builder.button(text="❌ Отмена", callback_data="cancel")
++    builder.adjust(2)
++    return builder.as_markup()
++
++
++def confirm_keyboard() -> InlineKeyboardMarkup:
++    return InlineKeyboardMarkup(
++        inline_keyboard=[
++            [
++                InlineKeyboardButton(text="✅ Сохранить", callback_data="confirm:yes"),
++                InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"),
++            ]
++        ]
++    )
+diff --git a/telegram-bot/bot/middlewares.py b/telegram-bot/bot/middlewares.py
+new file mode 100644
+index 0000000..28a933f
+--- /dev/null
++++ b/telegram-bot/bot/middlewares.py
+@@ -0,0 +1,44 @@
++from collections.abc import Awaitable, Callable
++from typing import Any
++
++from aiogram import BaseMiddleware
++from aiogram.types import CallbackQuery, Message, TelegramObject
++
++from bot.config import get_settings
++
++
++class AllowlistMiddleware(BaseMiddleware):
++    """Drop updates from anyone not listed in AURUM_TELEGRAM_ALLOWED_USER_IDS."""
++
++    async def __call__(
++        self,
++        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
++        event: TelegramObject,
++        data: dict[str, Any],
++    ) -> Any:
++        user = data.get("event_from_user")
++        allowed = get_settings().allowed_user_ids()
++        if user is None:
++            return None
++
++        if not allowed:
++            text = (
++                "Бот не настроен: задайте AURUM_TELEGRAM_ALLOWED_USER_IDS "
++                f"(ваш Telegram user id) в .env и перезапустите telegram-bot.\nВаш id: {user.id}"
++            )
++            if isinstance(event, Message):
++                await event.answer(text)
++            elif isinstance(event, CallbackQuery):
++                await event.answer("Нет доступа: задайте ALLOWED_USER_IDS", show_alert=True)
++                if event.message:
++                    await event.message.answer(text)
++            return None
++
++        if user.id not in allowed:
++            if isinstance(event, Message):
++                await event.answer("Нет доступа.")
++            elif isinstance(event, CallbackQuery):
++                await event.answer("Нет доступа.", show_alert=True)
++            return None
++
++        return await handler(event, data)
+diff --git a/telegram-bot/bot/states.py b/telegram-bot/bot/states.py
+new file mode 100644
+index 0000000..98e7181
+--- /dev/null
++++ b/telegram-bot/bot/states.py
+@@ -0,0 +1,9 @@
++from aiogram.fsm.state import State, StatesGroup
++
++
++class ExpenseFlow(StatesGroup):
++    amount = State()
++    description = State()
++    account = State()
++    category = State()
++    confirm = State()
+diff --git a/telegram-bot/requirements.txt b/telegram-bot/requirements.txt
+new file mode 100644
+index 0000000..d1daf58
+--- /dev/null
++++ b/telegram-bot/requirements.txt
+@@ -0,0 +1,3 @@
++aiogram==3.22.0
++httpx==0.28.1
++pydantic-settings==2.15.0
 -- 
 2.43.0
 

@@ -1,7 +1,7 @@
 From f3dc43a00d0823cb6c4720d7796bdad5f517de81 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:24:30 +0000
-Subject: [PATCH 1/4] feat(accounts): allow marking a primary account
+Subject: [PATCH 1/5] feat(accounts): allow marking a primary account
 
 Add an is_primary flag so one account sorts first in lists and is
 pre-selected in expense/income forms. Setting primary clears any other;
@@ -425,7 +425,7 @@ index 6964603..5749e54 100644
 From 0bcca2fd21fd7d83b7f0c9632a21a67715b4ad4c Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:39:50 +0000
-Subject: [PATCH 2/4] feat(ui): show account currency on balances and
+Subject: [PATCH 2/5] feat(ui): show account currency on balances and
  transactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -837,7 +837,7 @@ index 5749e54..8cc0030 100644
 From 91a41e2f856c3c2da8bfd4febe99508423f704b5 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 05:16:47 +0000
-Subject: [PATCH 3/4] fix(ui): show two decimal places on currency amounts
+Subject: [PATCH 3/5] fix(ui): show two decimal places on currency amounts
 
 Stop rounding dashboard and transaction amounts to whole units so
 kopecks/cents stay visible (matches Numeric(14, 2) storage).
@@ -964,7 +964,7 @@ index 94e2f57..88f0e75 100644
 From 6508c32a5596cd0df9c43c6154ad86334eab24e9 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 05:58:15 +0000
-Subject: [PATCH 4/4] =?UTF-8?q?fix(ui):=20use=20underlined=20=D1=81=20as?=
+Subject: [PATCH 4/5] =?UTF-8?q?fix(ui):=20use=20underlined=20=D1=81=20as?=
  =?UTF-8?q?=20Kyrgyz=20som=20currency=20mark?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -1037,6 +1037,766 @@ index 88f0e75..38916bd 100644
  }
  
  /** Narrow symbol for a currency code — ⃀ for KGS, ₽ for RUB, $ for USD, etc.
+-- 
+2.43.0
+
+
+From 89ed46a170d5d2744320b3e69cfa353b3a8fc40f Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 29 Sep 2026 06:02:30 +0000
+Subject: [PATCH 5/5] feat(dashboard): break summary down by account currency
+
+Stop mixing KGS/USD/RUB on the overview. API returns by_currency
+slices; the UI renders separate stat cards and category donuts per
+currency.
+---
+ DOCS.md                                       |  20 +++
+ backend/app/schemas/dashboard.py              |  21 +++
+ backend/app/services/category_rollup.py       |  26 +++-
+ backend/app/services/dashboard_service.py     | 120 ++++++++++++---
+ backend/tests/test_dashboard.py               |  44 ++++++
+ .../categories/CategoryBreakdownModal.tsx     |   8 +-
+ .../dashboard/SpendingByCategoryCard.tsx      |  23 ++-
+ frontend/src/lib/i18n.ts                      |   8 +
+ frontend/src/pages/DashboardPage.tsx          | 145 ++++++++++++++----
+ frontend/src/types/index.ts                   |  12 ++
+ 10 files changed, 359 insertions(+), 68 deletions(-)
+
+diff --git a/DOCS.md b/DOCS.md
+index 9eb783e..0ad2eaf 100644
+--- a/DOCS.md
++++ b/DOCS.md
+@@ -724,12 +724,32 @@ into an external dashboard without recomputing it yourself.
+ 
+ **`GET /dashboard/summary` response:**
+ 
++`by_currency` lists the same headline fields + spending breakdown **per account
++currency** — amounts in different currencies are never mixed. Prefer those
++slices for UI. The top-level `real_income` / `spent` / `net` fields remain for
++backward compatibility (and may still mix currencies if the month has more
++than one).
++
+ ```json
+ {
+   "year": 2026, "month": 8,
+   "real_income": "5200.00", "spent": "3120.45", "net": "2079.55", "transferred_out": "500.00",
+   "spending_by_category": [
+     { "category_id": 4, "name": "Groceries", "color": "#22c55e", "icon": "shopping-cart", "amount": "612.30", "percent": 19.6 }
++  ],
++  "by_currency": [
++    {
++      "currency": "KGS",
++      "real_income": "45000.00", "spent": "12000.00", "net": "33000.00", "transferred_out": "0.00",
++      "spending_by_category": [
++        { "category_id": 4, "name": "Groceries", "color": "#22c55e", "icon": "shopping-cart", "amount": "3500.00", "percent": 29.2 }
++      ]
++    },
++    {
++      "currency": "USD",
++      "real_income": "800.00", "spent": "120.00", "net": "680.00", "transferred_out": "0.00",
++      "spending_by_category": []
++    }
+   ]
+ }
+ ```
+diff --git a/backend/app/schemas/dashboard.py b/backend/app/schemas/dashboard.py
+index a4db052..44224ca 100644
+--- a/backend/app/schemas/dashboard.py
++++ b/backend/app/schemas/dashboard.py
+@@ -28,11 +28,32 @@ class CategoryBreakdownItem(BaseModel):
+     children: list[CategoryBreakdownChildItem] = Field(default_factory=list)
+ 
+ 
++class CurrencyDashboardSummary(BaseModel):
++    """One month's headline numbers for a single account currency.
++
++    Amounts in different currencies are never mixed — each currency gets
++    its own income/spent/net and its own spending-by-category donut.
++    """
++
++    currency: str
++    real_income: Decimal
++    spent: Decimal
++    net: Decimal
++    transferred_out: Decimal
++    spending_by_category: list[CategoryBreakdownItem]
++
++
+ class DashboardSummary(BaseModel):
+     year: int
+     month: int
++    # Legacy top-level totals (pre-multi-currency). Still populated for
++    # advice/insights and older clients: when the month uses only one
++    # currency they match that slice; with several currencies they stay
++    # as the unconverted sum (historical behaviour) so callers that have
++    # not moved to `by_currency` yet keep working. Prefer `by_currency`.
+     real_income: Decimal
+     spent: Decimal
+     net: Decimal
+     transferred_out: Decimal
+     spending_by_category: list[CategoryBreakdownItem]
++    by_currency: list[CurrencyDashboardSummary] = Field(default_factory=list)
+diff --git a/backend/app/services/category_rollup.py b/backend/app/services/category_rollup.py
+index 9946aae..a1ba0f3 100644
+--- a/backend/app/services/category_rollup.py
++++ b/backend/app/services/category_rollup.py
+@@ -20,6 +20,7 @@ from decimal import Decimal
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.models.account import Account
+ from app.models.category import Category
+ from app.models.enums import TransactionType
+ from app.models.transaction import Transaction, TransactionSplit
+@@ -66,19 +67,28 @@ async def _raw_category_contributions(
+     transaction_type: TransactionType,
+     start_date: date_ | None,
+     end_date: date_ | None,
++    currency: str | None = None,
+ ) -> list[tuple[int, int, Decimal]]:
+     """(transaction_id, category_id, amount) for every category a
+     transaction of this type/date-range contributed to. A plain transaction
+     contributes one row (its own category); a split one contributes one row
+     per split line — never both for the same transaction, since a
+     transaction is either plain (category_id set, no splits) or split
+-    (category_id NULL, 2+ splits), enforced at write time."""
+-    plain_stmt = select(Transaction.id, Transaction.category_id, Transaction.amount).where(
+-        Transaction.type == transaction_type, Transaction.category_id.is_not(None)
++    (category_id NULL, 2+ splits), enforced at write time.
++
++    When ``currency`` is set, only transactions on accounts in that ISO
++    code are included — amounts in different currencies must never be
++    summed into one category slice.
++    """
++    plain_stmt = (
++        select(Transaction.id, Transaction.category_id, Transaction.amount)
++        .join(Account, Account.id == Transaction.account_id)
++        .where(Transaction.type == transaction_type, Transaction.category_id.is_not(None))
+     )
+     split_stmt = (
+         select(TransactionSplit.transaction_id, TransactionSplit.category_id, TransactionSplit.amount)
+         .join(Transaction, Transaction.id == TransactionSplit.transaction_id)
++        .join(Account, Account.id == Transaction.account_id)
+         .where(Transaction.type == transaction_type, TransactionSplit.category_id.is_not(None))
+     )
+     if start_date is not None:
+@@ -87,6 +97,9 @@ async def _raw_category_contributions(
+     if end_date is not None:
+         plain_stmt = plain_stmt.where(Transaction.date <= end_date)
+         split_stmt = split_stmt.where(Transaction.date <= end_date)
++    if currency is not None:
++        plain_stmt = plain_stmt.where(Account.currency == currency)
++        split_stmt = split_stmt.where(Account.currency == currency)
+ 
+     plain_rows = (await session.execute(plain_stmt)).all()
+     split_rows = (await session.execute(split_stmt)).all()
+@@ -99,12 +112,17 @@ async def rollup_spending_by_top_level_category(
+     transaction_type: TransactionType,
+     start_date: date_ | None = None,
+     end_date: date_ | None = None,
++    currency: str | None = None,
+ ) -> list[CategoryRollupItem]:
+     """Every top-level category's total for the period, sorted by amount
+     desc (category sort_order as tiebreak — same order the SQL-only version
+     used to produce)."""
+     contributions = await _raw_category_contributions(
+-        session, transaction_type=transaction_type, start_date=start_date, end_date=end_date
++        session,
++        transaction_type=transaction_type,
++        start_date=start_date,
++        end_date=end_date,
++        currency=currency,
+     )
+     if not contributions:
+         return []
+diff --git a/backend/app/services/dashboard_service.py b/backend/app/services/dashboard_service.py
+index 3a1a414..1a75b09 100644
+--- a/backend/app/services/dashboard_service.py
++++ b/backend/app/services/dashboard_service.py
+@@ -6,9 +6,15 @@ from decimal import Decimal
+ from sqlalchemy import func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.models.account import Account
+ from app.models.enums import TransactionType
+ from app.models.transaction import Transaction
+-from app.schemas.dashboard import CategoryBreakdownChildItem, CategoryBreakdownItem, DashboardSummary
++from app.schemas.dashboard import (
++    CategoryBreakdownChildItem,
++    CategoryBreakdownItem,
++    CurrencyDashboardSummary,
++    DashboardSummary,
++)
+ from app.services.category_rollup import rollup_spending_by_top_level_category
+ 
+ # Categorical slots are capped at 8 (dataviz skill: a 9th series folds into "Other",
+@@ -22,29 +28,39 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
+     return date(year, month, 1), date(year, month, last_day)
+ 
+ 
+-async def get_dashboard_summary(session: AsyncSession, year: int, month: int) -> DashboardSummary:
+-    start, end = _month_bounds(year, month)
+-
+-    totals_stmt = (
++async def _totals_for_scope(
++    session: AsyncSession,
++    start: date,
++    end: date,
++    currency: str | None = None,
++) -> dict[TransactionType, Decimal]:
++    stmt = (
+         select(Transaction.type, func.coalesce(func.sum(Transaction.amount), 0))
++        .join(Account, Account.id == Transaction.account_id)
+         .where(Transaction.date >= start, Transaction.date <= end)
+         .group_by(Transaction.type)
+     )
+-    totals_result = await session.execute(totals_stmt)
+-    totals: dict[TransactionType, Decimal] = {row[0]: row[1] for row in totals_result.all()}
++    if currency is not None:
++        stmt = stmt.where(Account.currency == currency)
++    result = await session.execute(stmt)
++    return {row[0]: row[1] for row in result.all()}
+ 
+-    real_income = totals.get(TransactionType.INCOME, Decimal("0"))
+-    spent = totals.get(TransactionType.EXPENSE, Decimal("0"))
+-    transferred_out = totals.get(TransactionType.TRANSFER, Decimal("0"))
+ 
+-    # A subcategory's spending rolls up into its parent's slice, and a split
+-    # transaction's category_id=NULL means its category lives on its split
+-    # lines instead — rollup_spending_by_top_level_category handles both
+-    # the same way a plain transaction's category already was.
+-    rows = await rollup_spending_by_top_level_category(
+-        session, transaction_type=TransactionType.EXPENSE, start_date=start, end_date=end
++async def _currencies_in_month(session: AsyncSession, start: date, end: date) -> list[str]:
++    stmt = (
++        select(Account.currency)
++        .join(Transaction, Transaction.account_id == Account.id)
++        .where(Transaction.date >= start, Transaction.date <= end)
++        .distinct()
++        .order_by(Account.currency)
+     )
++    return list((await session.execute(stmt)).scalars().all())
++
+ 
++def _category_breakdown(
++    rows,
++    spent: Decimal,
++) -> list[CategoryBreakdownItem]:
+     top_rows, rest_rows = rows[:MAX_CHART_SLICES], rows[MAX_CHART_SLICES:]
+ 
+     def _percent(amount: Decimal) -> float:
+@@ -52,11 +68,18 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
+ 
+     spending_by_category = [
+         CategoryBreakdownItem(
+-            category_id=row.category_id, name=row.name, color=row.color, icon=row.icon,
+-            amount=row.amount, percent=_percent(row.amount),
++            category_id=row.category_id,
++            name=row.name,
++            color=row.color,
++            icon=row.icon,
++            amount=row.amount,
++            percent=_percent(row.amount),
+             children=[
+                 CategoryBreakdownChildItem(
+-                    category_id=child.category_id, name=child.name, color=child.color, icon=child.icon,
++                    category_id=child.category_id,
++                    name=child.name,
++                    color=child.color,
++                    icon=child.icon,
+                     amount=child.amount,
+                 )
+                 for child in row.children
+@@ -69,10 +92,62 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
+         other_amount = sum((row.amount for row in rest_rows), Decimal("0"))
+         spending_by_category.append(
+             CategoryBreakdownItem(
+-                category_id=None, name="Other", color=OTHER_SLICE_COLOR, icon="more-horizontal",
+-                amount=other_amount, percent=_percent(other_amount),
++                category_id=None,
++                name="Other",
++                color=OTHER_SLICE_COLOR,
++                icon="more-horizontal",
++                amount=other_amount,
++                percent=_percent(other_amount),
+             )
+         )
++    return spending_by_category
++
++
++async def _currency_summary(
++    session: AsyncSession,
++    start: date,
++    end: date,
++    currency: str,
++) -> CurrencyDashboardSummary:
++    totals = await _totals_for_scope(session, start, end, currency=currency)
++    real_income = totals.get(TransactionType.INCOME, Decimal("0"))
++    spent = totals.get(TransactionType.EXPENSE, Decimal("0"))
++    transferred_out = totals.get(TransactionType.TRANSFER, Decimal("0"))
++    rows = await rollup_spending_by_top_level_category(
++        session,
++        transaction_type=TransactionType.EXPENSE,
++        start_date=start,
++        end_date=end,
++        currency=currency,
++    )
++    return CurrencyDashboardSummary(
++        currency=currency,
++        real_income=real_income,
++        spent=spent,
++        net=real_income - spent,
++        transferred_out=transferred_out,
++        spending_by_category=_category_breakdown(rows, spent),
++    )
++
++
++async def get_dashboard_summary(session: AsyncSession, year: int, month: int) -> DashboardSummary:
++    start, end = _month_bounds(year, month)
++
++    # Legacy mixed totals — kept for advice/insights and older clients.
++    mixed_totals = await _totals_for_scope(session, start, end, currency=None)
++    real_income = mixed_totals.get(TransactionType.INCOME, Decimal("0"))
++    spent = mixed_totals.get(TransactionType.EXPENSE, Decimal("0"))
++    transferred_out = mixed_totals.get(TransactionType.TRANSFER, Decimal("0"))
++    mixed_rows = await rollup_spending_by_top_level_category(
++        session,
++        transaction_type=TransactionType.EXPENSE,
++        start_date=start,
++        end_date=end,
++        currency=None,
++    )
++
++    currencies = await _currencies_in_month(session, start, end)
++    by_currency = [await _currency_summary(session, start, end, code) for code in currencies]
+ 
+     return DashboardSummary(
+         year=year,
+@@ -81,5 +156,6 @@ async def get_dashboard_summary(session: AsyncSession, year: int, month: int) ->
+         spent=spent,
+         net=real_income - spent,
+         transferred_out=transferred_out,
+-        spending_by_category=spending_by_category,
++        spending_by_category=_category_breakdown(mixed_rows, spent),
++        by_currency=by_currency,
+     )
+diff --git a/backend/tests/test_dashboard.py b/backend/tests/test_dashboard.py
+index 293db39..8a3e32d 100644
+--- a/backend/tests/test_dashboard.py
++++ b/backend/tests/test_dashboard.py
+@@ -182,3 +182,47 @@ async def test_a_single_category_slice_has_no_children_breakdown(client: AsyncCl
+     breakdown = {row["name"]: row for row in resp.json()["spending_by_category"]}
+ 
+     assert breakdown["Groceries"]["children"] == []
++
++
++async def test_by_currency_keeps_kgs_and_usd_separate(client: AsyncClient, account_id, categories):
++    """A som expense and a dollar expense must not be added into one spent total."""
++    kgs = await client.post(
++        "/accounts", json={"name": "Elcart", "type": "debit_card", "currency": "KGS"}
++    )
++    usd = await client.post(
++        "/accounts", json={"name": "Visa USD", "type": "debit_card", "currency": "USD"}
++    )
++    groceries = categories["Groceries"]["id"]
++    salary = categories["Salary"]["id"]
++
++    await client.post(
++        "/transactions",
++        json=_txn(kgs.json()["id"], type="income", amount="1000.00", category_id=salary, date="2026-08-01"),
++    )
++    await client.post(
++        "/transactions",
++        json=_txn(kgs.json()["id"], amount="250.50", category_id=groceries, date="2026-08-02"),
++    )
++    await client.post(
++        "/transactions",
++        json=_txn(usd.json()["id"], type="income", amount="80.00", category_id=salary, date="2026-08-03"),
++    )
++    await client.post(
++        "/transactions",
++        json=_txn(usd.json()["id"], amount="20.00", category_id=groceries, date="2026-08-04"),
++    )
++
++    resp = await client.get("/dashboard/summary", params={"year": 2026, "month": 8})
++    body = resp.json()
++    by_currency = {row["currency"]: row for row in body["by_currency"]}
++
++    assert set(by_currency) >= {"KGS", "USD"}
++    assert money(by_currency["KGS"]["real_income"]) == Decimal("1000.00")
++    assert money(by_currency["KGS"]["spent"]) == Decimal("250.50")
++    assert money(by_currency["KGS"]["net"]) == Decimal("749.50")
++    assert money(by_currency["USD"]["real_income"]) == Decimal("80.00")
++    assert money(by_currency["USD"]["spent"]) == Decimal("20.00")
++    assert money(by_currency["USD"]["net"]) == Decimal("60.00")
++
++    kgs_breakdown = {row["name"]: row for row in by_currency["KGS"]["spending_by_category"]}
++    assert money(kgs_breakdown["Groceries"]["amount"]) == Decimal("250.50")
+diff --git a/frontend/src/components/categories/CategoryBreakdownModal.tsx b/frontend/src/components/categories/CategoryBreakdownModal.tsx
+index 4b24331..a6f5c76 100644
+--- a/frontend/src/components/categories/CategoryBreakdownModal.tsx
++++ b/frontend/src/components/categories/CategoryBreakdownModal.tsx
+@@ -19,6 +19,7 @@ interface CategoryBreakdownModalProps {
+   categoryName: string;
+   totalAmount: string;
+   children: CategoryBreakdownChild[];
++  currency?: string;
+ }
+ 
+ /** Shows how a parent category's total splits across its subcategories — a
+@@ -35,6 +36,7 @@ export function CategoryBreakdownModal({
+   categoryName,
+   totalAmount,
+   children,
++  currency,
+ }: CategoryBreakdownModalProps) {
+   const { t } = useTranslation();
+   const total = Number(totalAmount);
+@@ -43,7 +45,9 @@ export function CategoryBreakdownModal({
+     <Dialog open={open} onClose={onClose} title={translateCategoryName(categoryName)}>
+       <div className="mb-3 flex items-center justify-between border-b border-gridline pb-3 text-sm">
+         <span className="text-text-muted">{t("reports.categoryBreakdownTotalLabel")}</span>
+-        <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(totalAmount)}</span>
++        <span className="font-semibold tabular-nums text-text-primary">
++          {formatCurrency(totalAmount, currency)}
++        </span>
+       </div>
+       <ul className="divide-y divide-gridline">
+         {children.map((child) => {
+@@ -63,7 +67,7 @@ export function CategoryBreakdownModal({
+                 {percent.toFixed(0)}%
+               </span>
+               <span className="shrink-0 text-sm font-medium tabular-nums text-text-primary">
+-                {formatCurrency(child.amount)}
++                {formatCurrency(child.amount, currency)}
+               </span>
+             </li>
+           );
+diff --git a/frontend/src/components/dashboard/SpendingByCategoryCard.tsx b/frontend/src/components/dashboard/SpendingByCategoryCard.tsx
+index e3939f2..0e4582e 100644
+--- a/frontend/src/components/dashboard/SpendingByCategoryCard.tsx
++++ b/frontend/src/components/dashboard/SpendingByCategoryCard.tsx
+@@ -11,22 +11,32 @@ import type { CategoryBreakdownItem } from "@/types";
+ 
+ interface SpendingByCategoryCardProps {
+   items: CategoryBreakdownItem[];
++  currency: string;
++  title?: string;
+ }
+ 
+-function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: CategoryBreakdownItem }> }) {
++function DonutTooltip({
++  active,
++  payload,
++  currency,
++}: {
++  active?: boolean;
++  payload?: Array<{ payload: CategoryBreakdownItem }>;
++  currency: string;
++}) {
+   if (!active || !payload?.length) return null;
+   const item = payload[0].payload;
+   return (
+     <div className="rounded-lg border border-border bg-surface-1 px-3 py-2 text-sm shadow-md">
+       <p className="font-medium text-text-primary">{translateCategoryName(item.name)}</p>
+       <p className="text-text-secondary">
+-        {formatCurrency(item.amount)} · {item.percent.toFixed(1)}%
++        {formatCurrency(item.amount, currency)} · {item.percent.toFixed(1)}%
+       </p>
+     </div>
+   );
+ }
+ 
+-export function SpendingByCategoryCard({ items }: SpendingByCategoryCardProps) {
++export function SpendingByCategoryCard({ items, currency, title }: SpendingByCategoryCardProps) {
+   const { t } = useTranslation();
+   // The breakdown lives in a modal, not expanded inline — a category with
+   // many subcategories (or many split purchases) would otherwise push this
+@@ -41,7 +51,7 @@ export function SpendingByCategoryCard({ items }: SpendingByCategoryCardProps) {
+   return (
+     <Card>
+       <CardHeader>
+-        <CardTitle>{t("dashboard.spendingByCategoryTitle")}</CardTitle>
++        <CardTitle>{title ?? t("dashboard.spendingByCategoryTitle")}</CardTitle>
+       </CardHeader>
+       <CardContent>
+         {!hasData ? (
+@@ -66,7 +76,7 @@ export function SpendingByCategoryCard({ items }: SpendingByCategoryCardProps) {
+                       <Cell key={item.category_id ?? "other"} fill={item.color} />
+                     ))}
+                   </Pie>
+-                  <Tooltip content={<DonutTooltip />} />
++                  <Tooltip content={<DonutTooltip currency={currency} />} />
+                 </PieChart>
+               </ResponsiveContainer>
+             </div>
+@@ -103,7 +113,7 @@ export function SpendingByCategoryCard({ items }: SpendingByCategoryCardProps) {
+                       {translateCategoryName(item.name)}
+                     </span>
+                     <span className="shrink-0 text-sm font-medium tabular-nums text-text-primary">
+-                      {formatCurrency(item.amount)}
++                      {formatCurrency(item.amount, currency)}
+                     </span>
+                   </li>
+                 );
+@@ -121,6 +131,7 @@ export function SpendingByCategoryCard({ items }: SpendingByCategoryCardProps) {
+           categoryName={breakdownItem.name}
+           totalAmount={breakdownItem.amount}
+           children={breakdownItem.children}
++          currency={currency}
+         />
+       )}
+     </Card>
+diff --git a/frontend/src/lib/i18n.ts b/frontend/src/lib/i18n.ts
+index a39cacf..ba4ceee 100644
+--- a/frontend/src/lib/i18n.ts
++++ b/frontend/src/lib/i18n.ts
+@@ -69,6 +69,10 @@ const ru = {
+   "dashboard.statSavingsRateLabel": "Норма сбережений",
+   "dashboard.statSavingsRateCaption": "доля дохода, оставшаяся после расходов",
+   "dashboard.spendingByCategoryTitle": "Расходы по категориям",
++  "dashboard.spendingByCategoryTitleCurrency": "Расходы по категориям · {{currency}}",
++  "dashboard.multiCurrencyHint":
++    "Суммы посчитаны отдельно по каждой валюте — разные валюты не складываются.",
++  "dashboard.noActivityThisMonth": "За этот месяц пока нет операций.",
+   "dashboard.noExpensesThisMonth": "За этот месяц пока нет расходов. Добавьте первую транзакцию на вкладке «Транзакции».",
+   "dashboard.recentTransactionsTitle": "Последние транзакции",
+   "dashboard.allTransactionsLink": "Все транзакции",
+@@ -598,6 +602,10 @@ const en: Record<keyof typeof ru, string> = {
+   "dashboard.statSavingsRateLabel": "Savings rate",
+   "dashboard.statSavingsRateCaption": "share of income left after spending",
+   "dashboard.spendingByCategoryTitle": "Spending by category",
++  "dashboard.spendingByCategoryTitleCurrency": "Spending by category · {{currency}}",
++  "dashboard.multiCurrencyHint":
++    "Totals are shown per currency — different currencies are never added together.",
++  "dashboard.noActivityThisMonth": "No activity yet this month.",
+   "dashboard.noExpensesThisMonth": "No expenses yet this month. Add your first transaction on the Transactions tab.",
+   "dashboard.recentTransactionsTitle": "Recent transactions",
+   "dashboard.allTransactionsLink": "All transactions",
+diff --git a/frontend/src/pages/DashboardPage.tsx b/frontend/src/pages/DashboardPage.tsx
+index 96e959a..22c4006 100644
+--- a/frontend/src/pages/DashboardPage.tsx
++++ b/frontend/src/pages/DashboardPage.tsx
+@@ -1,4 +1,4 @@
+-import { useState } from "react";
++import { useMemo, useState } from "react";
+ import { MonthSelector } from "@/components/layout/MonthSelector";
+ import { YearSelector } from "@/components/layout/YearSelector";
+ import { StatCard } from "@/components/dashboard/StatCard";
+@@ -7,8 +7,10 @@ import { RecentTransactionsCard } from "@/components/dashboard/RecentTransaction
+ import { AlertBanner } from "@/components/insights/AlertBanner";
+ import { useDashboardSummary } from "@/hooks/useDashboard";
+ import { useTransactionYears } from "@/hooks/useTransactions";
+-import { formatCurrency, formatSignedCurrency } from "@/lib/format";
++import { getCurrencyLabel } from "@/lib/currency";
++import { formatCurrency, formatSignedCurrency, getCurrencySymbol } from "@/lib/format";
+ import { useTranslation } from "@/lib/i18n";
++import type { CurrencyDashboardSummary } from "@/types";
+ 
+ /** Share of income left over after spending (net / real_income). `null` when
+  * there was no income to take a share of, rather than a misleading 0%. */
+@@ -21,64 +23,139 @@ function formatPercent(value: number): string {
+   return `${sign}${value.toFixed(0)}%`;
+ }
+ 
+-export function DashboardPage() {
+-  const { t } = useTranslation();
+-  const now = new Date();
+-  const [year, setYear] = useState(now.getFullYear());
+-  const [month, setMonth] = useState(now.getMonth() + 1);
+-  const { data: years } = useTransactionYears();
+-
+-  const { data, isLoading, isError } = useDashboardSummary(year, month);
+-  const rate = data ? savingsRate(Number(data.real_income), Number(data.net)) : null;
++function CurrencyStatsBlock({
++  slice,
++  showHeading,
++}: {
++  slice: CurrencyDashboardSummary;
++  showHeading: boolean;
++}) {
++  const { t, language } = useTranslation();
++  const rate = savingsRate(Number(slice.real_income), Number(slice.net));
++  const symbol = getCurrencySymbol(slice.currency);
++  const heading =
++    symbol !== slice.currency
++      ? `${getCurrencyLabel(slice.currency, language)} (${symbol})`
++      : getCurrencyLabel(slice.currency, language);
+ 
+   return (
+-    <div className="space-y-5">
+-      <AlertBanner excludeKeys={["risky_allocation_exceeded"]} />
+-
+-      <div className="flex items-center gap-3">
+-        <div className="min-w-0 flex-1">
+-          <MonthSelector month={month} onChange={setMonth} />
+-        </div>
+-        <YearSelector years={years ?? [now.getFullYear()]} year={year} onChange={setYear} />
+-      </div>
+-
+-      {isError && (
+-        <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+-          {t("dashboard.errorLoading")}
+-        </p>
++    <section className="space-y-3">
++      {showHeading && (
++        <h2 className="text-sm font-semibold uppercase tracking-wide text-text-secondary">{heading}</h2>
+       )}
+-
+       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+         <StatCard
+           label={t("dashboard.statRealIncomeLabel")}
+-          value={isLoading ? "…" : formatCurrency(data?.real_income ?? 0)}
++          value={formatCurrency(slice.real_income, slice.currency)}
+           caption={t("dashboard.statRealIncomeCaption")}
+           tone="success"
+         />
+         <StatCard
+           label={t("dashboard.statSpentLabel")}
+-          value={isLoading ? "…" : formatCurrency(data?.spent ?? 0)}
++          value={formatCurrency(slice.spent, slice.currency)}
+           caption={t("dashboard.statSpentCaption")}
+           tone="danger"
+         />
+         <StatCard
+           label={t("dashboard.statNetLabel")}
+-          value={isLoading ? "…" : formatSignedCurrency(data?.net ?? 0)}
++          value={formatSignedCurrency(slice.net, slice.currency)}
+           caption={t("dashboard.statNetCaption")}
+-          tone={Number(data?.net ?? 0) >= 0 ? "success" : "danger"}
++          tone={Number(slice.net) >= 0 ? "success" : "danger"}
+         />
+         <StatCard
+           label={t("dashboard.statSavingsRateLabel")}
+-          value={isLoading ? "…" : rate === null ? "—" : formatPercent(rate)}
++          value={rate === null ? "—" : formatPercent(rate)}
+           caption={t("dashboard.statSavingsRateCaption")}
+           tone={rate === null ? "default" : rate >= 0 ? "success" : "danger"}
+         />
+       </div>
++      <SpendingByCategoryCard
++        items={slice.spending_by_category}
++        currency={slice.currency}
++        title={
++          showHeading
++            ? t("dashboard.spendingByCategoryTitleCurrency", { currency: slice.currency })
++            : undefined
++        }
++      />
++    </section>
++  );
++}
++
++export function DashboardPage() {
++  const { t, currency: appCurrency } = useTranslation();
++  const now = new Date();
++  const [year, setYear] = useState(now.getFullYear());
++  const [month, setMonth] = useState(now.getMonth() + 1);
++  const { data: years } = useTransactionYears();
++
++  const { data, isLoading, isError } = useDashboardSummary(year, month);
++
++  const slices = useMemo(() => {
++    const byCurrency = data?.by_currency ?? [];
++    if (byCurrency.length > 0) {
++      // App primary currency first, then the rest A→Z (API already sorts A→Z).
++      return [...byCurrency].sort((a, b) => {
++        if (a.currency === appCurrency) return -1;
++        if (b.currency === appCurrency) return 1;
++        return a.currency.localeCompare(b.currency);
++      });
++    }
++    // Older backends without by_currency — single synthetic slice.
++    if (!data) return [];
++    return [
++      {
++        currency: appCurrency,
++        real_income: data.real_income,
++        spent: data.spent,
++        net: data.net,
++        transferred_out: data.transferred_out,
++        spending_by_category: data.spending_by_category,
++      },
++    ];
++  }, [data, appCurrency]);
++
++  const multiCurrency = slices.length > 1;
+ 
+-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+-        <SpendingByCategoryCard items={data?.spending_by_category ?? []} />
+-        <RecentTransactionsCard year={year} month={month} />
++  return (
++    <div className="space-y-5">
++      <AlertBanner excludeKeys={["risky_allocation_exceeded"]} />
++
++      <div className="flex items-center gap-3">
++        <div className="min-w-0 flex-1">
++          <MonthSelector month={month} onChange={setMonth} />
++        </div>
++        <YearSelector years={years ?? [now.getFullYear()]} year={year} onChange={setYear} />
+       </div>
++
++      {isError && (
++        <p className="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
++          {t("dashboard.errorLoading")}
++        </p>
++      )}
++
++      {isLoading ? (
++        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
++          <StatCard label={t("dashboard.statRealIncomeLabel")} value="…" caption={t("dashboard.statRealIncomeCaption")} />
++          <StatCard label={t("dashboard.statSpentLabel")} value="…" caption={t("dashboard.statSpentCaption")} />
++          <StatCard label={t("dashboard.statNetLabel")} value="…" caption={t("dashboard.statNetCaption")} />
++          <StatCard label={t("dashboard.statSavingsRateLabel")} value="…" caption={t("dashboard.statSavingsRateCaption")} />
++        </div>
++      ) : (
++        <div className="space-y-8">
++          {multiCurrency && (
++            <p className="text-xs text-text-muted">{t("dashboard.multiCurrencyHint")}</p>
++          )}
++          {slices.map((slice) => (
++            <CurrencyStatsBlock key={slice.currency} slice={slice} showHeading={multiCurrency} />
++          ))}
++          {slices.length === 0 && !isError && (
++            <p className="py-6 text-center text-sm text-text-muted">{t("dashboard.noActivityThisMonth")}</p>
++          )}
++        </div>
++      )}
++
++      <RecentTransactionsCard year={year} month={month} />
+     </div>
+   );
+ }
+diff --git a/frontend/src/types/index.ts b/frontend/src/types/index.ts
+index 8cc0030..a4d37dc 100644
+--- a/frontend/src/types/index.ts
++++ b/frontend/src/types/index.ts
+@@ -187,6 +187,15 @@ export interface CategoryBreakdownItem {
+   children: CategoryBreakdownChildItem[];
+ }
+ 
++export interface CurrencyDashboardSummary {
++  currency: string;
++  real_income: string;
++  spent: string;
++  net: string;
++  transferred_out: string;
++  spending_by_category: CategoryBreakdownItem[];
++}
++
+ export interface DashboardSummary {
+   year: number;
+   month: number;
+@@ -195,6 +204,9 @@ export interface DashboardSummary {
+   net: string;
+   transferred_out: string;
+   spending_by_category: CategoryBreakdownItem[];
++  /** Per-account-currency slices — prefer these over the top-level totals,
++   * which historically mixed currencies without conversion. */
++  by_currency: CurrencyDashboardSummary[];
+ }
+ 
+ export type AssetClass = "investments" | "crypto" | "real_estate" | "vehicles" | "precious_metals" | "other";
 -- 
 2.43.0
 

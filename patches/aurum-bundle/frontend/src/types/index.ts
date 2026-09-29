@@ -187,6 +187,15 @@ export interface CategoryBreakdownItem {
   children: CategoryBreakdownChildItem[];
 }
 
+export interface CurrencyDashboardSummary {
+  currency: string;
+  real_income: string;
+  spent: string;
+  net: string;
+  transferred_out: string;
+  spending_by_category: CategoryBreakdownItem[];
+}
+
 export interface DashboardSummary {
   year: number;
   month: number;
@@ -195,6 +204,9 @@ export interface DashboardSummary {
   net: string;
   transferred_out: string;
   spending_by_category: CategoryBreakdownItem[];
+  /** Per-account-currency slices — prefer these over the top-level totals,
+   * which historically mixed currencies without conversion. */
+  by_currency: CurrencyDashboardSummary[];
 }
 
 export type AssetClass = "investments" | "crypto" | "real_estate" | "vehicles" | "precious_metals" | "other";

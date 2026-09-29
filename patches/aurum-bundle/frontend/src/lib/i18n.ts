@@ -69,6 +69,10 @@ const ru = {
   "dashboard.statSavingsRateLabel": "Норма сбережений",
   "dashboard.statSavingsRateCaption": "доля дохода, оставшаяся после расходов",
   "dashboard.spendingByCategoryTitle": "Расходы по категориям",
+  "dashboard.spendingByCategoryTitleCurrency": "Расходы по категориям · {{currency}}",
+  "dashboard.multiCurrencyHint":
+    "Суммы посчитаны отдельно по каждой валюте — разные валюты не складываются.",
+  "dashboard.noActivityThisMonth": "За этот месяц пока нет операций.",
   "dashboard.noExpensesThisMonth": "За этот месяц пока нет расходов. Добавьте первую транзакцию на вкладке «Транзакции».",
   "dashboard.recentTransactionsTitle": "Последние транзакции",
   "dashboard.allTransactionsLink": "Все транзакции",
@@ -598,6 +602,10 @@ const en: Record<keyof typeof ru, string> = {
   "dashboard.statSavingsRateLabel": "Savings rate",
   "dashboard.statSavingsRateCaption": "share of income left after spending",
   "dashboard.spendingByCategoryTitle": "Spending by category",
+  "dashboard.spendingByCategoryTitleCurrency": "Spending by category · {{currency}}",
+  "dashboard.multiCurrencyHint":
+    "Totals are shown per currency — different currencies are never added together.",
+  "dashboard.noActivityThisMonth": "No activity yet this month.",
   "dashboard.noExpensesThisMonth": "No expenses yet this month. Add your first transaction on the Transactions tab.",
   "dashboard.recentTransactionsTitle": "Recent transactions",
   "dashboard.allTransactionsLink": "All transactions",

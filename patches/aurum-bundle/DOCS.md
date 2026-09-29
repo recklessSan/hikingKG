@@ -724,12 +724,32 @@ into an external dashboard without recomputing it yourself.
 
 **`GET /dashboard/summary` response:**
 
+`by_currency` lists the same headline fields + spending breakdown **per account
+currency** — amounts in different currencies are never mixed. Prefer those
+slices for UI. The top-level `real_income` / `spent` / `net` fields remain for
+backward compatibility (and may still mix currencies if the month has more
+than one).
+
 ```json
 {
   "year": 2026, "month": 8,
   "real_income": "5200.00", "spent": "3120.45", "net": "2079.55", "transferred_out": "500.00",
   "spending_by_category": [
     { "category_id": 4, "name": "Groceries", "color": "#22c55e", "icon": "shopping-cart", "amount": "612.30", "percent": 19.6 }
+  ],
+  "by_currency": [
+    {
+      "currency": "KGS",
+      "real_income": "45000.00", "spent": "12000.00", "net": "33000.00", "transferred_out": "0.00",
+      "spending_by_category": [
+        { "category_id": 4, "name": "Groceries", "color": "#22c55e", "icon": "shopping-cart", "amount": "3500.00", "percent": 29.2 }
+      ]
+    },
+    {
+      "currency": "USD",
+      "real_income": "800.00", "spent": "120.00", "net": "680.00", "transferred_out": "0.00",
+      "spending_by_category": []
+    }
   ]
 }
 ```

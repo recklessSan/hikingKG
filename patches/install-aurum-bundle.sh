@@ -45,7 +45,13 @@ find . -type f | while read -r f; do
   echo "  wrote $rel"
 done
 
+if [[ -f "$AURUM/aurum-up.sh" ]]; then
+  chmod +x "$AURUM/aurum-up.sh"
+fi
+
 echo
 echo "Done. Your .env was left untouched."
-echo "Rebuild:"
+echo "Start (safe after reboot/sleep):"
+echo "  \"$AURUM/aurum-up.sh\""
+echo "First install / after code updates:"
 echo "  cd \"$AURUM\" && docker compose up -d --build"

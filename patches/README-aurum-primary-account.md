@@ -1,6 +1,33 @@
 # Aurum patches (Mac: ~/KR-DEV/Aurum)
 
-Установка **копированием файлов** (не `git apply`):
+## Чтобы не настраивать заново после сна / выключения
+
+Данные уже живут в Docker volume `aurum_pgdata` — они **не пропадают** от reboot и sleep.
+Контейнеры в compose с `restart: unless-stopped` поднимаются сами, когда Docker Desktop снова online.
+
+Сделай один раз:
+
+1. **Docker Desktop → Settings → General → Start Docker Desktop when you sign in**
+2. Установи патчи (ниже) и **больше не трогай** `~/KR-DEV/Aurum/.env`
+3. После пробуждения Mac, если страница не открылась — одна команда:
+
+```bash
+~/KR-DEV/Aurum/aurum-up.sh
+```
+
+Не нужно: заново клонировать патчи, `down -v`, переписывать пароль, переустанавливать бандл.
+Нельзя: `docker compose down -v` / `docker volume rm` — это удалит транзакции.
+
+Если backend в `Restarting` с `InvalidPasswordError` (обычно после порчи `.env`) — один раз:
+
+```bash
+~/hikingKG-patches/patches/aurum-fix-db-password.sh ~/KR-DEV/Aurum
+~/KR-DEV/Aurum/aurum-up.sh
+```
+
+---
+
+## Установка патчей (копированием, не `git apply`)
 
 ```bash
 cd ~
@@ -9,14 +36,16 @@ git clone --depth 1 -b cursor/aurum-primary-account-5ca6 \
   https://github.com/recklessSan/hikingKG.git hikingKG-patches
 
 chmod +x ~/hikingKG-patches/patches/install-aurum-bundle.sh
+chmod +x ~/hikingKG-patches/patches/aurum-fix-db-password.sh
 ~/hikingKG-patches/patches/install-aurum-bundle.sh ~/KR-DEV/Aurum
 
 cd ~/KR-DEV/Aurum
-docker compose up -d --build
+chmod +x aurum-up.sh
+./aurum-up.sh   # или: docker compose up -d --build  при первой установке
 ```
 
 **Важно:** рабочие настройки — в файле `.env` (не `.env.example`).
-Установщик больше не перезаписывает `.env` и существующий `.env.example`.
+Установщик не перезаписывает `.env` и существующий `.env.example`.
 
 Проверка порта/пароля:
 

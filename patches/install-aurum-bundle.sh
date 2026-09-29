@@ -25,11 +25,27 @@ echo "Installing into $AURUM"
 cd "$BUNDLE"
 find . -type f | while read -r f; do
   rel="${f#./}"
+
+  # Never overwrite local secrets / env the user already tuned.
+  case "$rel" in
+    .env|.env.local|.env.*.local)
+      echo "  skip $rel (local secrets)"
+      continue
+      ;;
+    .env.example)
+      if [[ -f "$AURUM/$rel" ]]; then
+        echo "  skip $rel (already exists — not overwriting your template)"
+        continue
+      fi
+      ;;
+  esac
+
   mkdir -p "$AURUM/$(dirname "$rel")"
   cp "$rel" "$AURUM/$rel"
   echo "  wrote $rel"
 done
 
 echo
-echo "Done. Rebuild:"
+echo "Done. Your .env was left untouched."
+echo "Rebuild:"
 echo "  cd \"$AURUM\" && docker compose up -d --build"

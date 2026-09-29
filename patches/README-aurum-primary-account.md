@@ -1,25 +1,46 @@
-# Aurum: основной счёт + отображение валют
+# Aurum: основной счёт + валюты счетов
 
-Патч добавляет:
+## Если `git apply` падает
 
-1. Галочку **«Основной счёт»** — выбранный счёт всегда первый в списках и по умолчанию в расходах.
-2. Отображение **валюты счёта** в списке счетов, транзакциях и селектах.
-3. Суммы форматируются в валюте счёта; для **KGS** используется знак сома **⃀**.
-4. Поле **Валюта** в форме счёта.
-5. Подпись валюты KGS: «Кыргызский сом».
+Не используйте патч. Скопируйте готовые файлы скриптом.
 
-## Как применить на Mac
+### На Mac
 
 ```bash
-cd /путь/к/Aurum
-curl -L -o aurum-primary-account.patch \
-  https://raw.githubusercontent.com/recklessSan/hikingKG/cursor/aurum-primary-account-5ca6/patches/aurum-primary-account.patch
-git apply aurum-primary-account.patch
+# 1) скачать папку patches из ветки hikingKG
+cd ~
+git clone --depth 1 -b cursor/aurum-primary-account-5ca6 \
+  https://github.com/recklessSan/hikingKG.git hikingKG-patches
+
+# 2) установить файлы в ваш Aurum (подставьте свой путь)
+chmod +x ~/hikingKG-patches/patches/install-aurum-bundle.sh
+~/hikingKG-patches/patches/install-aurum-bundle.sh ~/Aurum
+
+# 3) пересобрать
+cd ~/Aurum
 docker compose up -d --build
 ```
 
-## Как пользоваться
+Если у вас Aurum лежит в другом месте — передайте этот путь первым аргументом скрипта.
 
-1. **Счета → Элкарт → изменить** → валюта **KGS**, галочка **Основной счёт** → Сохранить.
-2. В списке счетов будет `KGS`, баланс вида `⃀1 234`.
-3. В транзакциях сумма тоже в валюте счёта.
+### Что делать, если прошлый `git apply` частично прошёл
+
+```bash
+cd ~/Aurum
+# посмотреть «битое» состояние
+git status
+
+# вариант А — откатиться к чистому состоянию репозитория, потом поставить бандл:
+git restore .
+git clean -fd
+# (осторожно: удалит незакоммиченные файлы)
+~/hikingKG-patches/patches/install-aurum-bundle.sh ~/Aurum
+docker compose up -d --build
+```
+
+## Возможности после установки
+
+1. Галочка **Основной счёт**
+2. Валюта на счетах и в транзакциях
+3. Для KGS — знак сома **сом** (U+20C0 ⃀)
+4. Поле валюты в форме счёта

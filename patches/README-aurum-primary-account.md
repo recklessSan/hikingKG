@@ -12,29 +12,28 @@ cd ~
 git clone --depth 1 -b cursor/aurum-primary-account-5ca6 \
   https://github.com/recklessSan/hikingKG.git hikingKG-patches
 
-# 2) установить файлы в ваш Aurum (подставьте свой путь)
+# 2) установить файлы в Aurum
 chmod +x ~/hikingKG-patches/patches/install-aurum-bundle.sh
-~/hikingKG-patches/patches/install-aurum-bundle.sh ~/Aurum
+~/hikingKG-patches/patches/install-aurum-bundle.sh ~/KR-DEV/Aurum
 
 # 3) пересобрать
-cd ~/Aurum
+cd ~/KR-DEV/Aurum
 docker compose up -d --build
 ```
 
-Если у вас Aurum лежит в другом месте — передайте этот путь первым аргументом скрипта.
+Путь Aurum на Mac: `~/KR-DEV/Aurum`.
 
 ### Что делать, если прошлый `git apply` частично прошёл
 
 ```bash
-cd ~/Aurum
-# посмотреть «битое» состояние
+cd ~/KR-DEV/Aurum
 git status
 
-# вариант А — откатиться к чистому состоянию репозитория, потом поставить бандл:
+# откатиться к чистому состоянию репозитория, потом поставить бандл:
 git restore .
 git clean -fd
 # (осторожно: удалит незакоммиченные файлы)
-~/hikingKG-patches/patches/install-aurum-bundle.sh ~/Aurum
+~/hikingKG-patches/patches/install-aurum-bundle.sh ~/KR-DEV/Aurum
 docker compose up -d --build
 ```
 

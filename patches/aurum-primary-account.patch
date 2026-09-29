@@ -1,0 +1,423 @@
+From f3dc43a00d0823cb6c4720d7796bdad5f517de81 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 29 Sep 2026 04:24:30 +0000
+Subject: [PATCH] feat(accounts): allow marking a primary account
+
+Add an is_primary flag so one account sorts first in lists and is
+pre-selected in expense/income forms. Setting primary clears any other;
+archiving a primary account drops the flag.
+---
+ DOCS.md                                       |  8 +++-
+ .../e4b2c9a17f30_add_account_is_primary.py    | 38 ++++++++++++++++
+ backend/app/db/seed.py                        |  1 +
+ backend/app/models/account.py                 |  5 +++
+ backend/app/schemas/account.py                |  2 +
+ backend/app/schemas/backup.py                 |  2 +
+ backend/app/services/account_service.py       | 35 +++++++++++++--
+ backend/tests/test_accounts.py                | 43 +++++++++++++++++++
+ .../components/accounts/AccountFormModal.tsx  | 21 ++++++++-
+ .../src/components/accounts/AccountList.tsx   |  5 +++
+ frontend/src/lib/currency.ts                  |  2 +-
+ frontend/src/lib/i18n.ts                      |  6 +++
+ frontend/src/types/index.ts                   |  2 +
+ 13 files changed, 162 insertions(+), 8 deletions(-)
+ create mode 100644 backend/alembic/versions/e4b2c9a17f30_add_account_is_primary.py
+
+diff --git a/DOCS.md b/DOCS.md
+index 412389f..9eb783e 100644
+--- a/DOCS.md
++++ b/DOCS.md
+@@ -146,7 +146,8 @@ stored — there's no "set balance" endpoint.
+   "name": "Checking",
+   "type": "checking",
+   "currency": "USD",
+-  "color": "#4f46e5"
++  "color": "#4f46e5",
++  "is_primary": true
+ }
+ ```
+ 
+@@ -155,6 +156,10 @@ stored — there's no "set balance" endpoint.
+ - `currency`: optional 3-letter code, defaults to `USD`. Purely a display label — not validated
+   against ISO 4217 and not used for conversion.
+ - `color`: optional hex color.
++- `is_primary`: optional, defaults to `false`. At most one account can be primary — setting it
++  on one account clears it on any other. The primary account is sorted first in `GET /accounts`
++  (so UIs that default to the first account pick it for new expenses/income). Archiving a
++  primary account clears the flag.
+ - `is_archived` (update only): archive/unarchive without deleting. An archived account is hidden
+   from the default account list but its transactions and balance remain intact.
+ 
+@@ -168,6 +173,7 @@ stored — there's no "set balance" endpoint.
+   "currency": "USD",
+   "color": "#4f46e5",
+   "is_archived": false,
++  "is_primary": true,
+   "balance": "1523.40"
+ }
+ ```
+diff --git a/backend/alembic/versions/e4b2c9a17f30_add_account_is_primary.py b/backend/alembic/versions/e4b2c9a17f30_add_account_is_primary.py
+new file mode 100644
+index 0000000..cba2fba
+--- /dev/null
++++ b/backend/alembic/versions/e4b2c9a17f30_add_account_is_primary.py
+@@ -0,0 +1,38 @@
++"""add is_primary flag to accounts
++
++Revision ID: e4b2c9a17f30
++Revises: d1a6f4c8b729
++Create Date: 2026-09-29 00:00:00.000000
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++# revision identifiers, used by Alembic.
++revision: str = "e4b2c9a17f30"
++down_revision: Union[str, None] = "d1a6f4c8b729"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column(
++        "accounts",
++        sa.Column("is_primary", sa.Boolean(), nullable=False, server_default=sa.false()),
++    )
++    # At most one primary account at a time.
++    op.create_index(
++        "ix_accounts_one_primary",
++        "accounts",
++        ["is_primary"],
++        unique=True,
++        postgresql_where=sa.text("is_primary IS TRUE"),
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("ix_accounts_one_primary", table_name="accounts")
++    op.drop_column("accounts", "is_primary")
+diff --git a/backend/app/db/seed.py b/backend/app/db/seed.py
+index 2662a89..a227156 100644
+--- a/backend/app/db/seed.py
++++ b/backend/app/db/seed.py
+@@ -73,6 +73,7 @@ async def seed_default_account(session: AsyncSession) -> None:
+             type=AccountType.CHECKING,
+             currency=get_settings().default_currency,
+             color="#2a78d6",
++            is_primary=True,
+         )
+     )
+     await session.commit()
+diff --git a/backend/app/models/account.py b/backend/app/models/account.py
+index 233b7f3..e86b43a 100644
+--- a/backend/app/models/account.py
++++ b/backend/app/models/account.py
+@@ -21,6 +21,11 @@ class Account(Base, TimestampMixin):
+     # Hex color used for account-scoped UI accents (e.g. transaction list avatars).
+     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
++    # At most one account should be primary — enforced in account_service
++    # (clears the previous flag) and by a partial unique index in Postgres.
++    # The primary account is sorted first in list responses so expense/income
++    # forms default to it (they pick accounts[0]).
++    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+ 
+     transactions: Mapped[list["Transaction"]] = relationship(
+         back_populates="account",
+diff --git a/backend/app/schemas/account.py b/backend/app/schemas/account.py
+index aa5b736..1f033cc 100644
+--- a/backend/app/schemas/account.py
++++ b/backend/app/schemas/account.py
+@@ -10,6 +10,7 @@ class AccountBase(BaseModel):
+     type: AccountType = AccountType.CHECKING
+     currency: str = Field(default="USD", min_length=3, max_length=3)
+     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
++    is_primary: bool = False
+ 
+ 
+ class AccountCreate(AccountBase):
+@@ -22,6 +23,7 @@ class AccountUpdate(BaseModel):
+     currency: str | None = Field(default=None, min_length=3, max_length=3)
+     color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+     is_archived: bool | None = None
++    is_primary: bool | None = None
+ 
+ 
+ class AccountRead(AccountBase):
+diff --git a/backend/app/schemas/backup.py b/backend/app/schemas/backup.py
+index e5958bb..5ec9e7d 100644
+--- a/backend/app/schemas/backup.py
++++ b/backend/app/schemas/backup.py
+@@ -26,6 +26,8 @@ class AccountBackup(BaseModel):
+     currency: str
+     color: str | None
+     is_archived: bool
++    # Default False so backups taken before this field existed still restore.
++    is_primary: bool = False
+ 
+ 
+ class CategoryBackup(BaseModel):
+diff --git a/backend/app/services/account_service.py b/backend/app/services/account_service.py
+index 78bff15..4bd5ec6 100644
+--- a/backend/app/services/account_service.py
++++ b/backend/app/services/account_service.py
+@@ -8,7 +8,7 @@ from collections import defaultdict
+ from decimal import Decimal
+ 
+ from fastapi import HTTPException
+-from sqlalchemy import select
++from sqlalchemy import select, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.account import Account
+@@ -42,12 +42,24 @@ def _to_read(account: Account, balance: Decimal) -> AccountWithBalance:
+         currency=account.currency,
+         color=account.color,
+         is_archived=account.is_archived,
++        is_primary=account.is_primary,
+         balance=balance,
+     )
+ 
+ 
++async def _clear_other_primaries(session: AsyncSession, keep_account_id: int | None = None) -> None:
++    """Ensure at most one account is primary. When keep_account_id is set,
++    that row is left alone (caller is about to set / keep it primary)."""
++    stmt = update(Account).where(Account.is_primary.is_(True)).values(is_primary=False)
++    if keep_account_id is not None:
++        stmt = stmt.where(Account.id != keep_account_id)
++    await session.execute(stmt)
++
++
+ async def list_accounts(session: AsyncSession, include_archived: bool) -> list[AccountWithBalance]:
+-    stmt = select(Account).order_by(Account.name)
++    # Primary first so expense/income/recurring forms (which default to
++    # accounts[0]) land on the user's preferred account; then A→Z by name.
++    stmt = select(Account).order_by(Account.is_primary.desc(), Account.name)
+     if not include_archived:
+         stmt = stmt.where(Account.is_archived.is_(False))
+     accounts = (await session.execute(stmt)).scalars().all()
+@@ -56,7 +68,10 @@ async def list_accounts(session: AsyncSession, include_archived: bool) -> list[A
+ 
+ 
+ async def create_account(session: AsyncSession, payload: AccountCreate) -> AccountWithBalance:
+-    account = Account(**payload.model_dump())
++    data = payload.model_dump()
++    if data.get("is_primary"):
++        await _clear_other_primaries(session)
++    account = Account(**data)
+     session.add(account)
+     await session.commit()
+     await session.refresh(account)
+@@ -68,8 +83,20 @@ async def update_account(session: AsyncSession, account_id: int, payload: Accoun
+     account = await session.get(Account, account_id)
+     if account is None:
+         raise HTTPException(status_code=404, detail="Account not found")
+-    for field, value in payload.model_dump(exclude_unset=True).items():
++
++    updates = payload.model_dump(exclude_unset=True)
++
++    # Archiving the primary account drops the flag — an archived "default"
++    # would otherwise stay sorted first while hidden from the picker.
++    if updates.get("is_archived") is True:
++        updates["is_primary"] = False
++
++    if updates.get("is_primary") is True:
++        await _clear_other_primaries(session, keep_account_id=account_id)
++
++    for field, value in updates.items():
+         setattr(account, field, value)
++
+     await session.commit()
+     await session.refresh(account)
+     balances = await _account_balances(session)
+diff --git a/backend/tests/test_accounts.py b/backend/tests/test_accounts.py
+index e968d45..114149b 100644
+--- a/backend/tests/test_accounts.py
++++ b/backend/tests/test_accounts.py
+@@ -32,3 +32,46 @@ async def test_debit_card_is_a_liquid_account_type(client: AsyncClient, categori
+ 
+     assert summary.status_code == 200
+     assert money(summary.json()["current"]) == money("1000.00")
++
++
++async def test_primary_account_sorts_first_and_is_exclusive(client: AsyncClient):
++    first = await client.post(
++        "/accounts",
++        json={"name": "Zulu", "type": "checking", "currency": "USD", "is_primary": True},
++    )
++    second = await client.post(
++        "/accounts",
++        json={"name": "Alpha", "type": "checking", "currency": "USD"},
++    )
++    assert first.status_code == 201
++    assert second.status_code == 201
++    assert first.json()["is_primary"] is True
++    assert second.json()["is_primary"] is False
++
++    listed = await client.get("/accounts")
++    assert listed.status_code == 200
++    names = [row["name"] for row in listed.json() if row["name"] in {"Zulu", "Alpha"}]
++    assert names[0] == "Zulu"
++
++    # Promoting Alpha clears Zulu's flag and puts Alpha first.
++    promoted = await client.patch(
++        f"/accounts/{second.json()['id']}",
++        json={"is_primary": True},
++    )
++    assert promoted.status_code == 200
++    assert promoted.json()["is_primary"] is True
++
++    listed_again = await client.get("/accounts")
++    rows = {row["name"]: row for row in listed_again.json() if row["name"] in {"Zulu", "Alpha"}}
++    assert rows["Alpha"]["is_primary"] is True
++    assert rows["Zulu"]["is_primary"] is False
++    ordered = [row["name"] for row in listed_again.json() if row["name"] in {"Zulu", "Alpha"}]
++    assert ordered[0] == "Alpha"
++
++    # Archiving the primary drops the flag.
++    archived = await client.patch(
++        f"/accounts/{second.json()['id']}",
++        json={"is_archived": True},
++    )
++    assert archived.status_code == 200
++    assert archived.json()["is_primary"] is False
+diff --git a/frontend/src/components/accounts/AccountFormModal.tsx b/frontend/src/components/accounts/AccountFormModal.tsx
+index cffb528..59b52f2 100644
+--- a/frontend/src/components/accounts/AccountFormModal.tsx
++++ b/frontend/src/components/accounts/AccountFormModal.tsx
+@@ -14,7 +14,7 @@ interface AccountFormModalProps {
+ 
+ const ACCOUNT_TYPES: AccountType[] = ["checking", "debit_card", "savings", "credit_card", "cash", "investment", "other"];
+ 
+-const EMPTY_FORM = { name: "", type: "checking" as AccountType };
++const EMPTY_FORM = { name: "", type: "checking" as AccountType, is_primary: false };
+ 
+ export function AccountFormModal({ open, onClose, account }: AccountFormModalProps) {
+   const { t } = useTranslation();
+@@ -26,7 +26,11 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
+ 
+   useEffect(() => {
+     if (!open) return;
+-    setForm(account ? { name: account.name, type: account.type } : EMPTY_FORM);
++    setForm(
++      account
++        ? { name: account.name, type: account.type, is_primary: account.is_primary }
++        : EMPTY_FORM,
++    );
+     setError(null);
+   }, [open, account]);
+ 
+@@ -77,6 +81,19 @@ export function AccountFormModal({ open, onClose, account }: AccountFormModalPro
+           </Select>
+         </div>
+ 
++        <label className="flex items-start gap-2 text-sm text-text-secondary">
++          <input
++            type="checkbox"
++            checked={form.is_primary}
++            onChange={(event) => setForm((prev) => ({ ...prev, is_primary: event.target.checked }))}
++            className="mt-0.5 h-3.5 w-3.5 accent-text-primary"
++          />
++          <span>
++            <span className="block font-medium text-text-primary">{t("account.form.primaryLabel")}</span>
++            <span className="block text-xs text-text-muted">{t("account.form.primaryHint")}</span>
++          </span>
++        </label>
++
+         {error && <p className="text-sm text-danger">{error}</p>}
+ 
+         <div className="flex justify-end gap-2 pt-2">
+diff --git a/frontend/src/components/accounts/AccountList.tsx b/frontend/src/components/accounts/AccountList.tsx
+index 164f712..80c9629 100644
+--- a/frontend/src/components/accounts/AccountList.tsx
++++ b/frontend/src/components/accounts/AccountList.tsx
+@@ -41,6 +41,11 @@ export function AccountList({ items, onEdit, onToggleArchived, onDelete }: Accou
+             <span className="min-w-0 flex-1">
+               <span className="flex items-center gap-1.5 truncate text-sm font-medium text-text-primary">
+                 {account.name}
++                {account.is_primary && (
++                  <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] leading-none text-text-secondary">
++                    {t("account.primaryBadge")}
++                  </span>
++                )}
+                 {account.is_archived && (
+                   <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] leading-none text-text-muted">
+                     {t("account.archivedBadge")}
+diff --git a/frontend/src/lib/currency.ts b/frontend/src/lib/currency.ts
+index d43781e..eb527eb 100644
+--- a/frontend/src/lib/currency.ts
++++ b/frontend/src/lib/currency.ts
+@@ -31,7 +31,7 @@ export const CURRENCIES: CurrencyOption[] = [
+   { code: "ILS", nameRu: "Израильский шекель", nameEn: "Israeli Shekel" },
+   { code: "INR", nameRu: "Индийская рупия", nameEn: "Indian Rupee" },
+   { code: "JPY", nameRu: "Японская иена", nameEn: "Japanese Yen" },
+-  { code: "KGS", nameRu: "Киргизский сом", nameEn: "Kyrgyzstani Som" },
++  { code: "KGS", nameRu: "Кыргызский сом", nameEn: "Kyrgyzstani Som" },
+   { code: "KRW", nameRu: "Южнокорейская вона", nameEn: "South Korean Won" },
+   { code: "KZT", nameRu: "Казахстанский тенге", nameEn: "Kazakhstani Tenge" },
+   { code: "MDL", nameRu: "Молдавский лей", nameEn: "Moldovan Leu" },
+diff --git a/frontend/src/lib/i18n.ts b/frontend/src/lib/i18n.ts
+index 39e058d..f16309f 100644
+--- a/frontend/src/lib/i18n.ts
++++ b/frontend/src/lib/i18n.ts
+@@ -449,6 +449,7 @@ const ru = {
+   "account.empty": "Счетов пока нет. Добавьте первый — например, текущий счёт или наличные.",
+   "account.showArchived": "Показывать архивные",
+   "account.archivedBadge": "архив",
++  "account.primaryBadge": "основной",
+   "account.archiveLabel": "Архивировать",
+   "account.unarchiveLabel": "Вернуть из архива",
+   "account.confirmDelete":
+@@ -465,6 +466,8 @@ const ru = {
+   "account.form.nameLabel": "Название",
+   "account.form.namePlaceholder": "Основной счёт, накопления, наличные…",
+   "account.form.typeLabel": "Тип",
++  "account.form.primaryLabel": "Основной счёт",
++  "account.form.primaryHint": "Будет первым в списке и подставляться по умолчанию в расходах и доходах.",
+   "account.form.saveError": "Не удалось сохранить счёт. Проверьте данные и попробуйте снова.",
+ 
+   "category.expenseSectionTitle": "Категории расходов",
+@@ -974,6 +977,7 @@ const en: Record<keyof typeof ru, string> = {
+   "account.empty": "No accounts yet. Add your first one — a checking account or cash, for example.",
+   "account.showArchived": "Show archived",
+   "account.archivedBadge": "archived",
++  "account.primaryBadge": "primary",
+   "account.archiveLabel": "Archive",
+   "account.unarchiveLabel": "Unarchive",
+   "account.confirmDelete":
+@@ -990,6 +994,8 @@ const en: Record<keyof typeof ru, string> = {
+   "account.form.nameLabel": "Name",
+   "account.form.namePlaceholder": "Main account, savings, cash…",
+   "account.form.typeLabel": "Type",
++  "account.form.primaryLabel": "Primary account",
++  "account.form.primaryHint": "Shown first in account lists and pre-selected for new expenses and income.",
+   "account.form.saveError": "Failed to save the account. Check the data and try again.",
+ 
+   "category.expenseSectionTitle": "Expense categories",
+diff --git a/frontend/src/types/index.ts b/frontend/src/types/index.ts
+index 6964603..5749e54 100644
+--- a/frontend/src/types/index.ts
++++ b/frontend/src/types/index.ts
+@@ -10,6 +10,7 @@ export interface Account {
+   currency: string;
+   color: string | null;
+   is_archived: boolean;
++  is_primary: boolean;
+ }
+ 
+ // The Accounts management page's shape — /api/accounts' own endpoints add a
+@@ -24,6 +25,7 @@ export interface AccountWithBalance extends Account {
+ export interface AccountInput {
+   name: string;
+   type: AccountType;
++  is_primary?: boolean;
+ }
+ 
+ export interface Category {
+-- 
+2.43.0
+

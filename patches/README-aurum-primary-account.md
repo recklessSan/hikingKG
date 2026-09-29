@@ -53,6 +53,11 @@ chmod +x aurum-up.sh
 grep -E 'WEB_PORT|POSTGRES_PASSWORD|TELEGRAM|BIND' ~/KR-DEV/Aurum/.env
 ```
 
+## Фильтр транзакций по счёту
+
+На странице «Транзакции» — выпадающий список счетов (рядом с типом/категорией).
+API уже принимал `?account_id=`; UI просто прокидывает его. Можно открыть сразу с фильтром: `/transactions?account=3`.
+
 ## Telegram-бот (aiogram)
 
 После установки бандла в `.env`:

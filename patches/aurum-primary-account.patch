@@ -1,7 +1,7 @@
 From f3dc43a00d0823cb6c4720d7796bdad5f517de81 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:24:30 +0000
-Subject: [PATCH 1/3] feat(accounts): allow marking a primary account
+Subject: [PATCH 1/4] feat(accounts): allow marking a primary account
 
 Add an is_primary flag so one account sorts first in lists and is
 pre-selected in expense/income forms. Setting primary clears any other;
@@ -425,7 +425,7 @@ index 6964603..5749e54 100644
 From 0bcca2fd21fd7d83b7f0c9632a21a67715b4ad4c Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 04:39:50 +0000
-Subject: [PATCH 2/3] feat(ui): show account currency on balances and
+Subject: [PATCH 2/4] feat(ui): show account currency on balances and
  transactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -837,7 +837,7 @@ index 5749e54..8cc0030 100644
 From 91a41e2f856c3c2da8bfd4febe99508423f704b5 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Tue, 29 Sep 2026 05:16:47 +0000
-Subject: [PATCH 3/3] fix(ui): show two decimal places on currency amounts
+Subject: [PATCH 3/4] fix(ui): show two decimal places on currency amounts
 
 Stop rounding dashboard and transaction amounts to whole units so
 kopecks/cents stay visible (matches Numeric(14, 2) storage).
@@ -957,6 +957,86 @@ index 94e2f57..88f0e75 100644
      currency,
    );
  }
+-- 
+2.43.0
+
+
+From 6508c32a5596cd0df9c43c6154ad86334eab24e9 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Tue, 29 Sep 2026 05:58:15 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?fix(ui):=20use=20underlined=20=D1=81=20as?=
+ =?UTF-8?q?=20Kyrgyz=20som=20currency=20mark?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Show som amounts with с̲ (like $ for USD) instead of the rarely
+supported U+20C0 glyph or the bare KGS code.
+---
+ frontend/src/lib/format.test.ts |  9 +++++----
+ frontend/src/lib/format.ts      | 12 ++++++------
+ 2 files changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/frontend/src/lib/format.test.ts b/frontend/src/lib/format.test.ts
+index e13600f..b1ee5cd 100644
+--- a/frontend/src/lib/format.test.ts
++++ b/frontend/src/lib/format.test.ts
+@@ -49,18 +49,19 @@ describe("formatCurrency", () => {
+     expect(formatCurrency("614", "USD")).toBe(formatCurrency(614, "USD"));
+   });
+ 
+-  it("renders Kyrgyz som with the som sign, not the ISO code", () => {
++  it("renders Kyrgyz som with underlined с, not the ISO code", () => {
+     const formatted = formatCurrency(614, "KGS");
+-    expect(formatted).toContain("\u20C0");
++    expect(formatted).toContain("с\u0332");
+     expect(formatted).not.toContain("KGS");
++    expect(formatted).not.toContain("\u20C0");
+   });
+ });
+ 
+ describe("getCurrencySymbol", () => {
+   beforeEach(() => setLanguage("en"));
+ 
+-  it("returns the som sign for KGS", () => {
+-    expect(getCurrencySymbol("KGS")).toBe("\u20C0");
++  it("returns underlined с for KGS", () => {
++    expect(getCurrencySymbol("KGS")).toBe("с\u0332");
+   });
+ });
+ 
+diff --git a/frontend/src/lib/format.ts b/frontend/src/lib/format.ts
+index 88f0e75..38916bd 100644
+--- a/frontend/src/lib/format.ts
++++ b/frontend/src/lib/format.ts
+@@ -5,10 +5,10 @@ export function getIntlLocale(language: Language = getLanguage()): string {
+   return language === "ru" ? "ru-RU" : "en-US";
+ }
+ 
+-/** Official Kyrgyz som sign (U+20C0). Some older ICU builds still emit the
+- * literal "KGS" code even with currencyDisplay: "narrowSymbol"; we force the
+- * glyph so som amounts never look like a bare ISO code. */
+-const SOM_SIGN = "\u20C0";
++/** Kyrgyz som mark: Cyrillic "с" with a low underline — the familiar local
++ * glyph (like "$" for USD). Prefer this over bare "KGS" or the rarely-fonted
++ * U+20C0 SOM SIGN, which often falls back to tofu or the ISO code. */
++const SOM_SIGN = "с\u0332";
+ 
+ /** Builds the currency formatter every money helper here shares, so amounts
+  * are labelled identically everywhere in the app.
+@@ -35,10 +35,10 @@ function createCurrencyFormatter(
+   });
+ }
+ 
+-/** Applies KGS → ⃀ when Intl falls back to the ISO code. */
++/** Forces the underlined-с som mark wherever Intl emitted KGS / U+20C0. */
+ function applyCurrencyGlyphOverrides(formatted: string, currency: string): string {
+   if (currency.toUpperCase() !== "KGS") return formatted;
+-  return formatted.includes(SOM_SIGN) ? formatted : formatted.replace(/\bKGS\b/g, SOM_SIGN);
++  return formatted.replace(/\u20C0/g, SOM_SIGN).replace(/\bKGS\b/g, SOM_SIGN);
+ }
+ 
+ /** Narrow symbol for a currency code — ⃀ for KGS, ₽ for RUB, $ for USD, etc.
 -- 
 2.43.0
 

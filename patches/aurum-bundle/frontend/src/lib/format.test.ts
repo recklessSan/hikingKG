@@ -49,18 +49,19 @@ describe("formatCurrency", () => {
     expect(formatCurrency("614", "USD")).toBe(formatCurrency(614, "USD"));
   });
 
-  it("renders Kyrgyz som with the som sign, not the ISO code", () => {
+  it("renders Kyrgyz som with underlined с, not the ISO code", () => {
     const formatted = formatCurrency(614, "KGS");
-    expect(formatted).toContain("\u20C0");
+    expect(formatted).toContain("с\u0332");
     expect(formatted).not.toContain("KGS");
+    expect(formatted).not.toContain("\u20C0");
   });
 });
 
 describe("getCurrencySymbol", () => {
   beforeEach(() => setLanguage("en"));
 
-  it("returns the som sign for KGS", () => {
-    expect(getCurrencySymbol("KGS")).toBe("\u20C0");
+  it("returns underlined с for KGS", () => {
+    expect(getCurrencySymbol("KGS")).toBe("с\u0332");
   });
 });
 

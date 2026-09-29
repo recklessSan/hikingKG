@@ -5,10 +5,10 @@ export function getIntlLocale(language: Language = getLanguage()): string {
   return language === "ru" ? "ru-RU" : "en-US";
 }
 
-/** Official Kyrgyz som sign (U+20C0). Some older ICU builds still emit the
- * literal "KGS" code even with currencyDisplay: "narrowSymbol"; we force the
- * glyph so som amounts never look like a bare ISO code. */
-const SOM_SIGN = "\u20C0";
+/** Kyrgyz som mark: Cyrillic "с" with a low underline — the familiar local
+ * glyph (like "$" for USD). Prefer this over bare "KGS" or the rarely-fonted
+ * U+20C0 SOM SIGN, which often falls back to tofu or the ISO code. */
+const SOM_SIGN = "с\u0332";
 
 /** Builds the currency formatter every money helper here shares, so amounts
  * are labelled identically everywhere in the app.
@@ -35,10 +35,10 @@ function createCurrencyFormatter(
   });
 }
 
-/** Applies KGS → ⃀ when Intl falls back to the ISO code. */
+/** Forces the underlined-с som mark wherever Intl emitted KGS / U+20C0. */
 function applyCurrencyGlyphOverrides(formatted: string, currency: string): string {
   if (currency.toUpperCase() !== "KGS") return formatted;
-  return formatted.includes(SOM_SIGN) ? formatted : formatted.replace(/\bKGS\b/g, SOM_SIGN);
+  return formatted.replace(/\u20C0/g, SOM_SIGN).replace(/\bKGS\b/g, SOM_SIGN);
 }
 
 /** Narrow symbol for a currency code — ⃀ for KGS, ₽ for RUB, $ for USD, etc.
